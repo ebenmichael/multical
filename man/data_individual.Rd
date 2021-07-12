@@ -5,10 +5,11 @@
 \alias{data_individual}
 \title{Fake data at the individual level}
 \format{
-A data frame with 2500 rows and 6 variables:
+A data frame with 2500 rows and 7 variables:
 \describe{
 \item{X1, X2, X3, X4}{Categorical variables}
 \item{response}{Whether the individual responded to the survey}
+\item{intarget}{Whether the individual is in the target population (all 1)}
 \item{y}{Binary answer to survey question}
 }
 }

@@ -23,6 +23,8 @@ compute_balance <- function(D, weights, sample_counts, target_counts) {
 #' 
 #' @return A data frame with the difference for each term and value of the 
 #' hyper-parameter
+#'
+#' @export
 get_balance <- function(output, order) {
 
   # get distinct cells
@@ -59,6 +61,9 @@ get_balance <- function(output, order) {
 #' 
 #' @return A data frame with the imbalance and effective sample size for each
 #' value of the hyper-parameter
+#'
+#' @export
+
 get_balance_v_sample_size <- function(output, order) {
 
   target_pop <- sum(output$target_count)

@@ -43,6 +43,7 @@ NULL
 #' 
 #' @return data frame with the weight for each distinct cell, for each value of 
 #' the hyperparameter \code{lambda}
+#'
 #' @export
 multical <- function(formula, target_count, data,
                       order = NULL, lambda = NULL,

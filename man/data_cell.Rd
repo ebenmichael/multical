@@ -10,7 +10,7 @@ A data frame with 91 rows and 6 variables:
 \item{X1, X2, X3, X4}{Categorical variables}
 \item{sample_count}{Number of respondents in the cell}
 \item{target_count}{Total population size in the cell}
-\item{y}{Total answers of 1 to a binary survey question in the cell}
+\item{y}{Proportion that answered "1" to a binary survey question in the cell}
 }
 }
 \usage{
