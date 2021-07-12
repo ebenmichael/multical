@@ -12,6 +12,7 @@ calibrate_(
   lambda = 1,
   lambda_max = NULL,
   n_lambda = 100,
+  lambda_min_ratio = 1e-05,
   lowlim = 0,
   uplim = Inf,
   verbose = FALSE,
@@ -25,7 +26,7 @@ calibrate_(
 
 \item{target_counts}{Vector of target counts for each cell}
 
-\item{order}{Integer. What order interactions to balance}
+\item{order}{Integer. What order interactions to balance. Default is all orders}
 
 \item{lambda}{Numeric. Regularization hyperparamter, by default fits weights
 for a range of values}
@@ -34,7 +35,9 @@ for a range of values}
 default is the root sum of squared differences between the (unweighted) sample and the target}
 
 \item{n_lambda}{Integer. Number of hyper-parameters to fit weights for, from
-lambda_max to lambda_max * 1e-5, equally spaced on the log scale. Default, 20}
+lambda_max to lambda_max * lambda_min_ratio, equally spaced on the log scale. Default, 20}
+
+\item{lambda_min_ratio}{Numeric. Ratio of min to max lambda to consider.}
 
 \item{lowlim}{Lower bound on weights, default 0}
 

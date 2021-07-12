@@ -28,13 +28,14 @@ NULL
 #' @param target_count Name of column with indicators for whether an individual 
 #' is in the target population (with individual-level data) or the target counts for each cell (with cell-level data)
 #' @param data Dataframe with covariate information, sample and target counts
-#' @param order Integer. What order interactions to balance
+#' @param order Integer. What order interactions to balance. Default is all orders
 #' @param lambda Numeric. Regularization hyperparamter, by default fits weights 
 #' for a range of values
 #' @param lambda_max Numeric. Maximum hyperparameter to fit weights with, 
 #' default is the root sum of squared differences between the (unweighted) sample and the target
 #' @param n_lambda Integer. Number of hyper-parameters to fit weights for, from 
-#' lambda_max to lambda_max * 1e-5, equally spaced on the log scale. Default, 20
+#' lambda_max to lambda_max * lambda_min_ratio, equally spaced on the log scale. Default, 20
+#' @param lambda_min_ratio Numeric. Ratio of min to max lambda to consider.
 #' @param lowlim Lower bound on weights, default 0
 #' @param uplim Upper bound on weights, default Inf
 #' @param verbose Boolean. Show optimization information, default False
@@ -46,6 +47,7 @@ NULL
 multical <- function(formula, target_count, data,
                       order = NULL, lambda = NULL,
                       lambda_max = NULL, n_lambda = 20,
+                      lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
                       verbose = FALSE, ...) {
   
@@ -56,7 +58,7 @@ multical <- function(formula, target_count, data,
   # get weights
   weights <- calibrate_(cells %>% select(-sample_count, -target_count),
                         cells$sample_count, cells$target_count,
-                        order, lambda, lambda_max, n_lambda,
+                        order, lambda, lambda_max, n_lambda, lambda_min_ratio,
                         lowlim, uplim, verbose, ...)
   # combine back in and return
   cells %>% filter(sample_count != 0) %>%
@@ -99,9 +101,13 @@ create_cells <- function(formula, target_count, data) {
 #' @keywords internal
 calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
+                      lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf, verbose = FALSE,
                       ...) {
 
+  if(is.null(order)) {
+    order <- ncol(cells)
+  }
   if(verbose) message("Creating design matrix")
   # get design matrix for the number of interactions
   D <- create_design_matrix(cells, order)
@@ -114,13 +120,17 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
 
   # P matrix and q vector
   if(verbose) message("Creating quadratic term matrix")
-  if(is.null(lambda)) {
+  if(is.null(lambda) & order > 1) {
     if(is.null(lambda_max)) {
       unif_imbal <- Matrix::t(D) %*% (sample_counts - target_counts)
       lambda_max <- sqrt(sum(unif_imbal ^ 2))
     }
-    lam_seq <- lambda_max * 10 ^ seq(0, -5, length.out = n_lambda)
+    lam_seq <- lambda_max * 10 ^ seq(0, log10(lambda_min_ratio),
+                                     length.out = n_lambda)
     P <- create_rake_Pmat(D, sample_counts, 0)
+  } else if(is.null(lambda) & order == 1) {
+    lambda <- 0
+    P <- create_rake_Pmat(D, sample_counts, lambda)
   } else {
     P <- create_rake_Pmat(D, sample_counts, lambda)
   }
