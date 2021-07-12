@@ -1,0 +1,15 @@
+Package: multical
+Title: Multilevel calibration weighting for surveys
+Version: 0.0.1
+Authors@R: 
+    person(given = "Eli",
+           family = "Ben-Michael",
+           role = c("aut", "cre"),
+           email = "ebenmichael@fas.harvard.edu",
+           comment = c(ORCID = "0000-0002-1175-4129"))
+Description: Finds calibration weights for surveys with convenience samples or non-response that exactly calibrates first order terms while approximately post-stratifying on higher order interactions.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
