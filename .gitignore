@@ -1,0 +1,31 @@
+Meta
+doc
+inst/doc
+
+## Files
+# Emacs autosave files
+*~
+\#*#
+# Don't put data in the repo
+*.csv
+*.feather
+
+# R stuff
+*.Rout
+*.Rhistory
+*.RData 
+*.Rapp.history
+
+# Mac stuff
+*.DS_store
+
+
+# C++ stuff
+*.o
+*.so
+*.dll
+
+
+# Extras
+*-vignette.pdf
+scrap

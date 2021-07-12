@@ -40,7 +40,7 @@ NULL
 #' @param verbose Boolean. Show optimization information, default False
 #' @param ... Additional parameters for osqp
 #' 
-#' @return DataFrame with the weight for each distinct cell, for each value of 
+#' @return data frame with the weight for each distinct cell, for each value of 
 #' the hyperparameter \code{lambda}
 #' @export
 multical <- function(formula, target_count, data,
@@ -72,7 +72,7 @@ multical <- function(formula, target_count, data,
 }
 
 
-#' Create DataFrame with all distinct cells, and their sample and target counts
+#' Create data frame with all distinct cells, and their sample and target counts
 #' @inheritParams multical
 #'
 #' @keywords internal
