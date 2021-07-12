@@ -1,22 +1,52 @@
 ################################################################################
-## Calibrate multiway tables
+## Multilevel calibration
 ################################################################################
 
-#' Calibrate sample to target
+#' multical
+#' 
+#' @description A package for multilevel calibration weighting
+#' @docType package
+#' @name multical-package
+#' @importFrom magrittr "%>%"
+#' @import dplyr
+#' @import tidyr
+#' @importFrom stats terms
+#' @importFrom stats formula
+NULL
+
+
+
+#' Calibrate sample to target via multilevel calibration
+#'
+#' Finds weights that exactly calibrate first order margins between respondents and the target population. Requires individual-level of cell-level data.
+#'
+#' @param formula Formula of the form \code{sample_count ~ covariates}, where 
+#' \code{sample_count} is whether or not an individual responded 
+#' (with individual-level data) or the number of respondents in the cell 
+#' (with cell-level data) and \code{covariates} are the covariates to calibrate 
+#' on
+#' @param target_count Name of column with indicators for whether an individual 
+#' is in the target population (with individual-level data) or the target counts for each cell (with cell-level data)
 #' @param data Dataframe with covariate information, sample and target counts
-#' @param formula sample_count ~ covariates
-#' @param target_count Number in cell in target
-#' @param order What order interactions to balance
-#' @param lambda Regularization hyperparamter
+#' @param order Integer. What order interactions to balance
+#' @param lambda Numeric. Regularization hyperparamter, by default fits weights 
+#' for a range of values
+#' @param lambda_max Numeric. Maximum hyperparameter to fit weights with, 
+#' default is the root sum of squared differences between the (unweighted) sample and the target
+#' @param n_lambda Integer. Number of hyper-parameters to fit weights for, from 
+#' lambda_max to lambda_max * 1e-5, equally spaced on the log scale. Default, 20
 #' @param lowlim Lower bound on weights, default 0
 #' @param uplim Upper bound on weights, default Inf
-#' @param prob_weights Optional sampling weights to include
+#' @param verbose Boolean. Show optimization information, default False
+#' @param ... Additional parameters for osqp
+#' 
+#' @return DataFrame with the weight for each distinct cell, for each value of 
+#' the hyperparameter \code{lambda}
 #' @export
-calibrate <- function(formula, target_count, data,
-                      order = NULL, lambda = 1,
-                      lambda_max = NULL, n_lambda = 100,
-                      lowlim = 0, uplim = Inf, 
-                      prob_weights = NULL,
+multical <- function(formula, target_count, data,
+                      order = NULL, lambda = NULL,
+                      lambda_max = NULL, n_lambda = 20,
+                      lowlim = 0, uplim = Inf,
                       verbose = FALSE, ...) {
   
   # create distinct cells for all interactions
@@ -27,7 +57,7 @@ calibrate <- function(formula, target_count, data,
   weights <- calibrate_(cells %>% select(-sample_count, -target_count),
                         cells$sample_count, cells$target_count,
                         order, lambda, lambda_max, n_lambda,
-                        lowlim, uplim, prob_weights, verbose, ...)
+                        lowlim, uplim, verbose, ...)
   # combine back in and return
   cells %>% filter(sample_count != 0) %>%
     bind_cols(weights) %>%
@@ -41,9 +71,12 @@ calibrate <- function(formula, target_count, data,
     return()
 }
 
+
+#' Create DataFrame with all distinct cells, and their sample and target counts
+#' @inheritParams multical
+#'
+#' @keywords internal
 create_cells <- function(formula, target_count, data) {
-
-
   covs <- all.vars(terms(Formula::Formula(formula), rhs = 1)[[3]])
   sample_count <- terms(Formula::Formula(formula), rhs = 1)[[2]]
   cells <- data %>%
@@ -54,15 +87,19 @@ create_cells <- function(formula, target_count, data) {
     ungroup()
 
   return(cells)
-  # cells <- cells %>% select(-sample_count, -target_count)
-  # return(list(cells = cells, sample_counts = sample_counts,
-  #             target_counts = target_counts))
 }
 
+
+#' Internal function to perform multilevel calibration
+#' @param cells Dataframe of distinct cells
+#' @param sample_counts Vector of sample counts for each cell
+#' @param target_counts Vector of target counts for each cell
+#' @inheritParams multical
+#'
+#' @keywords internal
 calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
-                      lowlim = 0, uplim = Inf,
-                      prob_weights = NULL, verbose = FALSE,
+                      lowlim = 0, uplim = Inf, verbose = FALSE,
                       ...) {
 
   if(verbose) message("Creating design matrix")
@@ -74,7 +111,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                                          target_counts, lowlim, uplim,
                                          verbose)
 
-  # return(constraints)
+
   # P matrix and q vector
   if(verbose) message("Creating quadratic term matrix")
   if(is.null(lambda)) {
@@ -90,8 +127,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   
   
   if(verbose) message("Creating linear term vector")
-  qvec <- create_rake_qvec(D, sample_counts, target_counts, lambda,
-                           prob_weights)
+  qvec <- create_rake_qvec(D, sample_counts, target_counts, lambda)
 
 
   settings <- do.call(osqp::osqpSettings,
@@ -100,25 +136,20 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   solver <- osqp::osqp(P, qvec, constraints$A, constraints$l, constraints$u,
                        pars = settings)
   if(verbose) message("Optimizing")
-  # solution <- osqp::solve_osqp(P, qvec, constraints$A,
-  #                              constraints$l, constraints$u,
-  #                              pars = settings)
+
   if(is.null(lambda)) {
-    
-    # get diagonal elements of P
-    # P_diag <- compute_Pmat_diag(D, sample_counts)
-    # diag_idx <- sapply(1: length(P_diag), function(i) c(i,i))
-    # print(diag_idx[1:10])
       
     x <- NULL
     y <- NULL
     solution <- matrix(, nrow = nrow(P), ncol = n_lambda)
+    # solve for values of lambda
     for(i in 1:length(lam_seq)) {
       if(verbose) message(paste0("Solving with lambda = ", lam_seq[i]))
-      
+
       P_new <- update_rake_Pmat(P, sample_counts, lam_seq[i])
       solver$Update(Px = Matrix::triu(P_new)@x)
-      # solver$Update(Px = Matrix::diag(P_new), Px_idx = 1:(nrow(P_new)))
+
+      # use warm start with previous solution to speed up optimization
       solver$WarmStart(x = x, y = y)
       sol_lam <- solver$Solve()
       x <- sol_lam$x
@@ -135,6 +166,13 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
 
 }
 
+#' Creates the underlying design matrix to solve the multilevel calibration
+#' optimization problem
+#' 
+#' @param cells Dataframe of distinct cells
+#' @param order Integer. What order interactions to balance
+#'
+#' @keywords internal
 create_design_matrix <- function(cells, order) {
 
   if(is.null(order)) {
@@ -153,40 +191,26 @@ create_design_matrix <- function(cells, order) {
 }
 
 
-create_arrays <- function(cells, sample_counts, target_counts) {
-
-  dnames <- lapply(cells, levels)
-  dims <- sapply(dnames, length)
-
-  sample_arr <- array(NA, dim = dims, dimnames = dnames)
-  target_arr <- array(NA, dim = dims, dimnames = dnames)
-
-  sample_arr[as.matrix(cells)] <- sample_counts
-  target_arr[as.matrix(cells)] <- target_counts
-
-  return(list(
-        sample = tidyr::replace_na(sample_arr, 0),
-        target = tidyr::replace_na(target_arr, 0)
-        ))
-}
-
-
+#' Create underlying constraints for optimization problem
+#' @param cells Dataframe of distinct cells
+#' @param D Design matrix, output from \code{\link{create_design_matrix}}
+#' @param sample_counts Vector of sample counts for each cell
+#' @param target_counts Vector of target counts for each cell
+#' @inheritParams multical
+#'
+#' @keywords internal
 create_rake_constraints <- function(cells, D, sample_counts, target_counts,
                                     lowlim, uplim, verbose) {
 
   if(verbose) message("Creating constraint matrix")
-  # number of cells
-  n_cells <- nrow(cells)
+
   # number of non-empty cells
   n_nempty <- sum(sample_counts != 0)
   sample_counts_nempty <- sample_counts[sample_counts != 0]
 
   # sum to N constraint
   if(verbose) message("\tx Sum to N constraint")
-  # A_sumN <- Matrix::cbind2(
-  #     Matrix::Matrix(sample_counts, nrow = 1, ncol = n_cells),
-  #     Matrix::Matrix(0, nrow = 1, ncol = ncol(D))
-  #     )
+
   A_sumN <- Matrix::Matrix(sample_counts_nempty, nrow = 1, ncol = n_nempty)
   l_sumN <- sum(target_counts)
   u_sumN <- l_sumN
@@ -194,44 +218,37 @@ create_rake_constraints <- function(cells, D, sample_counts, target_counts,
 
   # non-negative constraint
   if(verbose) message("\tx Non-negativity constraint")
-  # A_nn <- Matrix::cbind2(Matrix::Diagonal(n_cells),
-  #                       Matrix::Matrix(0, nrow = n_cells, ncol = ncol(D)))
   A_nn <- Matrix::Diagonal(n_nempty)
-  # l_nn <- rep(0, n_cells)
-  # u_nn <- rep(Inf, n_cells)
   l_nn <- rep(lowlim, n_nempty)
   u_nn <- rep(uplim, n_nempty)
 
   # marginal constraints
   if(verbose) message("\tx Exact marginal balance constraints")
   design_mat <- Matrix::sparse.model.matrix(~ . - 1, cells)
-  # A_marg <- Matrix::cbind2(Matrix::t(design_mat * sample_counts),
-  #                         Matrix::Matrix(0, nrow = ncol(design_mat),
-  #                                        ncol = ncol(D)))
+
   A_marg <- Matrix::t(design_mat[sample_counts != 0, , drop = F] * 
                       sample_counts_nempty)
   l_marg <- as.numeric(Matrix::t(design_mat) %*% target_counts)
   u_marg <- l_marg
 
-  # pre-compute t(D) %*% w
-  # if(verbose) message("\tx Pre-computing design matrix multiplication")
-  # A_D <- Matrix::cbind2(Matrix::t(D * sample_counts), -Matrix::Diagonal(ncol(D)))
-  # l_D <- numeric(ncol(D))
-  # u_D <- numeric(ncol(D))
-
   # combine
-  A <- rbind(A_sumN, A_nn, A_marg)#, A_D)
-  l <- c(l_sumN, l_nn, l_marg)#, l_D)
-  u <- c(u_sumN, u_nn, u_marg)#, u_D)
+  A <- rbind(A_sumN, A_nn, A_marg)
+  l <- c(l_sumN, l_nn, l_marg)
+  u <- c(u_sumN, u_nn, u_marg)
 
   return(list(A = A, l = l, u = u))
 
 }
 
+#' Create matrix for quadratic term in QP
+#' @param D Design matrix, output from \code{\link{create_design_matrix}}
+#' @param sample_counts Vector of sample counts for each cell
+#' @param lambda Numeric. Hyperparameter
+#'
+#' @keywords internal
 create_rake_Pmat <- function(D, sample_counts, lambda) {
 
-  # P <- Matrix::bdiag(c(as.list(rep(lambda, nrow(D))),
-  #                      as.list(rep(1, ncol(D)))))
+
   nnz_idxs <- which(sample_counts != 0)
   sqrtP <- D[nnz_idxs,, drop = F] * sample_counts[nnz_idxs]
   P <- sqrtP %*% Matrix::t(sqrtP) +
@@ -240,6 +257,11 @@ create_rake_Pmat <- function(D, sample_counts, lambda) {
 
 }
 
+#' Update the quadratic term matrix with a new hyperparameter value
+#' @param P Original quadratic term matrix
+#' @inheritParams create_rake_Pmat
+#'
+#' @keywords internal
 update_rake_Pmat <- function(P, sample_counts, lambda) {
 
   nnz_idxs <- which(sample_counts != 0)
@@ -250,27 +272,14 @@ update_rake_Pmat <- function(P, sample_counts, lambda) {
 
 
 
-compute_Pmat_diag <- function(D, sample_counts) {
+#' Create linear term vector in QP
+#' @inheritParams create_rake_constraints
+#'
+#' @keywords internal
+create_rake_qvec <- function(D, sample_counts, target_counts, lambda) {
 
   nnz_idxs <- which(sample_counts != 0)
-  d_counts <- Matrix::diag(D[nnz_idxs,, drop = F] %*% Matrix::t(D[nnz_idxs,, drop = F]))
-  return(d_counts * sample_counts[nnz_idxs] ^ 2)
-}
-
-create_rake_qvec <- function(D, sample_counts, target_counts, lambda, prob_weights) {
-
-  nnz_idxs <- which(sample_counts != 0)
-
-  if(is.null(prob_weights)) {
-    # prob_weights <- numeric(nrow(D))
-    prob_weights <- numeric(length(nnz_idxs))
-  }
-
   rhs <- Matrix::t(D) %*% target_counts
-  # lhs <- sample_counts * D
   lhs <- D[nnz_idxs,, drop = F] * sample_counts[nnz_idxs]
-
-  # return(-c(as.numeric(lhs %*% rhs) + lambda * prob_weights,
-  #           numeric(ncol(D))))
-  return(-c(as.numeric(lhs %*% rhs)))# + lambda * prob_weights))
+  return(-c(as.numeric(lhs %*% rhs)))
 }

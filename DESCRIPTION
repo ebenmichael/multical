@@ -8,6 +8,14 @@ Authors@R:
            email = "ebenmichael@fas.harvard.edu",
            comment = c(ORCID = "0000-0002-1175-4129"))
 Description: Finds calibration weights for surveys with convenience samples or non-response that exactly calibrates first order terms while approximately post-stratifying on higher order interactions.
+Imports:
+  Matrix,
+  osqp,
+  dplyr,
+  tidyr,
+  Formula
+Suggests:
+  testthat
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
