@@ -54,7 +54,9 @@ lambda_max to lambda_max * lambda_min_ratio, equally spaced on the log scale. De
 }
 \value{
 data frame with the weight for each distinct cell, for each value of
-the hyperparameter \code{lambda}
+the hyperparameter \code{lambda}. Note: the output data frame may have the
+cells in a different order than in \code{data}. Be sure to join the output
+with \code{data} on the variables to map the weights to the data accurately.
 }
 \description{
 Finds weights that exactly calibrate first order margins between respondents and the target population. Requires individual-level of cell-level data.

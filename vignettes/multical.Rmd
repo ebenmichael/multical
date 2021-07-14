@@ -85,3 +85,8 @@ For cell-level data, almost everything is the same. However, now we use the samp
 ```{r multical_cell}
 out <- multical(sample_count ~ X1 + X2 + X3 + X4, target_count, data_cell, order = 4, lambda = 1)
 ```
+Note: the output data frame `out` may have the cells in a different order than in the input data frame. Be sure to join the output  with the original data frame on the variables to map the weights to the data accurately.
+
+```{r multical_cell_join}
+head(dplyr::left_join(data_cell, out))
+```

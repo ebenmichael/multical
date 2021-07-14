@@ -44,7 +44,9 @@ NULL
 #' @param ... Additional parameters for osqp
 #' 
 #' @return data frame with the weight for each distinct cell, for each value of 
-#' the hyperparameter \code{lambda}
+#' the hyperparameter \code{lambda}. Note: the output data frame may have the 
+#' cells in a different order than in \code{data}. Be sure to join the output 
+#' with \code{data} on the variables to map the weights to the data accurately.
 #'
 #' @export
 multical <- function(formula, target_count, data,
