@@ -32,6 +32,7 @@ devtools::install_github("ebenmichael/multical")
 To show how to use `multical`, we'll use two contrived data examples. One, `data_individual`, has individual-level information on covariates, response, and outcome, while the other, `data_cell`, has cell-level information.
 ```{r setup}
 library(multical)
+library(dplyr)
 data(data_individual)
 data(data_cell)
 ```
@@ -65,6 +66,13 @@ We can see the difference between the re-weighted sample and the population via 
 get_balance(out, 1)
 ```
 
+To estimate the population average with individual level data, we can join the output with our data and take the weighted average
+```{r estimate_indiv_rake}
+inner_join(data_individual, out) %>%
+  filter(response == 1) %>%
+  summarise(sum(weight * y) / sum(weight))
+```
+
 If we want to include higher order interaction terms, we can increase `order` and give a hyper-parameter `lambda` that controls the degree of approximate post-stratification.
 ```{r multical_indiv}
 out <- multical(response ~ X1 + X2 + X3 + X4, intarget, data_individual, order = 4, lambda = 1)
@@ -85,8 +93,9 @@ For cell-level data, almost everything is the same. However, now we use the samp
 ```{r multical_cell}
 out <- multical(sample_count ~ X1 + X2 + X3 + X4, target_count, data_cell, order = 4, lambda = 1)
 ```
-Note: the output data frame `out` may have the cells in a different order than in the input data frame. Be sure to join the output  with the original data frame on the variables to map the weights to the data accurately.
+Note: the output data frame `out` may have the cells in a different order than in the input data frame. Be sure to join the output  with the original data frame on the variables to map the weights to the data accurately. We can then estimate the population average with the weights and sample counts.
 
 ```{r multical_cell_join}
-head(dplyr::left_join(data_cell, out))
+left_join(data_cell, out) %>%
+  summarise(sum(weight * sample_count * y) / sum(target_count))
 ```

@@ -29,6 +29,15 @@ To show how to use `multical`, we'll use two contrived data examples. One, `data
 
 ```r
 library(multical)
+library(dplyr)
+#> 
+#> Attaching package: 'dplyr'
+#> The following objects are masked from 'package:stats':
+#> 
+#>     filter, lag
+#> The following objects are masked from 'package:base':
+#> 
+#>     intersect, setdiff, setequal, union
 data(data_individual)
 data(data_cell)
 ```
@@ -94,6 +103,17 @@ get_balance(out, 1)
 #> 10      0 X44   0.00000312
 ```
 
+To estimate the population average with individual level data, we can join the output with our data and take the weighted average
+
+```r
+inner_join(data_individual, out) %>%
+  filter(response == 1) %>%
+  summarise(sum(weight * y) / sum(weight))
+#> Joining, by = c("X1", "X2", "X3", "X4")
+#>   sum(weight * y)/sum(weight)
+#> 1                   0.5422783
+```
+
 If we want to include higher order interaction terms, we can increase `order` and give a hyper-parameter `lambda` that controls the degree of approximate post-stratification.
 
 ```r
@@ -134,19 +154,15 @@ For cell-level data, almost everything is the same. However, now we use the samp
 ```r
 out <- multical(sample_count ~ X1 + X2 + X3 + X4, target_count, data_cell, order = 4, lambda = 1)
 ```
-Note: the output data frame `out` may have the cells in a different order than in the input data frame. Be sure to join the output  with the original data frame on the variables to map the weights to the data accurately.
+Note: the output data frame `out` may have the cells in a different order than in the input data frame. Be sure to join the output  with the original data frame on the variables to map the weights to the data accurately. We can then estimate the population average with the weights and sample counts.
 
 
 ```r
-head(dplyr::left_join(data_cell, out))
+left_join(data_cell, out) %>%
+  summarise(sum(weight * sample_count * y) / sum(target_count))
 #> Joining, by = c("X1", "X2", "X3", "X4", "sample_count", "target_count")
-#> # A tibble: 6 x 9
-#>   X1    X2    X3    X4    sample_count target_count     y lambda weight
-#>   <fct> <fct> <fct> <fct>        <dbl>        <dbl> <dbl>  <dbl>  <dbl>
-#> 1 1     1     1     1                8           50 0.42       1   6.94
-#> 2 1     1     1     2                5           21 0.810      1   5.27
-#> 3 1     1     1     3                2           17 0.765      1   6.66
-#> 4 1     1     1     4               33          281 0.530      1   7.83
-#> 5 1     1     2     1               10           29 0.552      1   3.71
-#> 6 1     1     2     2                9           23 0.565      1   2.77
+#> # A tibble: 1 x 1
+#>   `sum(weight * sample_count * y)/sum(target_count)`
+#>                                                <dbl>
+#> 1                                              0.515
 ```
