@@ -24,11 +24,13 @@ compute_balance <- function(D, weights, sample_counts, target_counts) {
 #' @return A data frame with the difference for each term and value of the 
 #' hyper-parameter
 #'
+#'
 #' @export
 get_balance <- function(output, order) {
 
   # get distinct cells
-  cells <- output %>% select(-sample_count, -target_count, -lambda, -weight) %>%
+  cells <- output %>%
+    select(-c("sample_count", "target_count", "lambda", "weight")) %>%
     distinct()
   
   D <- Matrix::sparse.model.matrix(~ . - 1, cells)
@@ -38,7 +40,7 @@ get_balance <- function(output, order) {
 
   output %>%
     nest(data = colnames(output)[colnames(output) != "lambda"]) %>%
-    mutate(imbalance = lapply(data,
+    mutate(imbalance = lapply(.data$data,
       function(df) {
         data.frame(
           term = colnames(D),
@@ -46,8 +48,8 @@ get_balance <- function(output, order) {
                                        df$target_count)
         )
       })) %>%
-    unnest(imbalance) %>%
-    select(-data)
+    unnest(.data$imbalance) %>%
+    select(-.data$data)
 }
 
 
@@ -69,15 +71,15 @@ get_balance_v_sample_size <- function(output, order) {
   target_pop <- sum(output$target_count)
   # get imbalances
   imbals <- get_balance(output, order) %>%
-    group_by(lambda) %>%
-    summarise(imbalance = sqrt(sum(difference ^ 2) / target_pop)) %>%
+    group_by(.data$lambda) %>%
+    summarise(imbalance = sqrt(sum(.data$difference ^ 2) / target_pop)) %>%
     ungroup()
 
   # get effective sample sizes
   neff <- output %>%
-    group_by(lambda) %>%
-    summarise(n_eff = sum(weight * sample_count) ^ 2 /
-                      sum(weight ^ 2 * sample_count)) %>%
+    group_by(.data$lambda) %>%
+    summarise(n_eff = sum(.data$weight * .data$sample_count) ^ 2 /
+                      sum(.data$weight ^ 2 * .data$sample_count)) %>%
     ungroup()
   
   return(inner_join(imbals, neff, by = "lambda"))

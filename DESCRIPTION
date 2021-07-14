@@ -13,7 +13,9 @@ Imports:
   osqp,
   dplyr,
   tidyr,
-  Formula
+  Formula,
+  magrittr,
+  rlang
 Suggests:
     rmarkdown,
     knitr,

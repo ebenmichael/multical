@@ -1,3 +1,5 @@
+context("Test that balancing is working")
+
 data(data_individual)
 data(data_cell)
 

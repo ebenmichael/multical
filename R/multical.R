@@ -12,6 +12,8 @@
 #' @import tidyr
 #' @importFrom stats terms
 #' @importFrom stats formula
+#' @importFrom stats as.formula
+#' @importFrom rlang .data
 NULL
 
 
@@ -51,26 +53,31 @@ multical <- function(formula, target_count, data,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
                       verbose = FALSE, ...) {
-  
+
+  # check if data is grouped and ungroup if it is, otherwise weird stuff happens!
+  if(is_grouped_df(data)) {
+    data <- ungroup(data)
+  }
+
   # create distinct cells for all interactions
   if(verbose) message("Creating table of cell counts")
   cells <- create_cells(formula, enquo(target_count), data)
 
   # get weights
-  weights <- calibrate_(cells %>% select(-sample_count, -target_count),
+  weights <- calibrate_(cells %>% select(-c("sample_count", "target_count")),
                         cells$sample_count, cells$target_count,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
                         lowlim, uplim, verbose, ...)
   # combine back in and return
-  cells %>% filter(sample_count != 0) %>%
+  cells %>% filter(.data$sample_count != 0) %>%
     bind_cols(weights) %>%
-    select(-sample_count, -target_count) %>%
+    select(-c("sample_count", "target_count")) %>%
     right_join(cells,
-               by = cells %>% select(-sample_count, -target_count) %>%
+               by = cells %>% select(-c("sample_count", "target_count")) %>%
                     names()) %>%
     pivot_longer(!names(cells), names_to = "lambda", values_to = "weight") %>%
-    mutate(weight = replace_na(weight, 0),
-           lambda = as.numeric(lambda)) %>%
+    mutate(weight = replace_na(.data$weight, 0),
+           lambda = as.numeric(.data$lambda)) %>%
     return()
 }
 
@@ -193,7 +200,6 @@ create_design_matrix <- function(cells, order) {
     return(Matrix::sparseMatrix(dims = c(nrow(cells), 1), i = {}, j = {}))
   }
 
-  contrast_cells <- lapply(cells, contrasts, contrasts = F)
 
   form <- as.formula(paste("~ . ^ ", order, " - . + 0"))
 
