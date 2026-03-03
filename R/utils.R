@@ -28,7 +28,7 @@ compute_balance <- function(D, weights, sample_counts, target_counts) {
 #' @export
 get_balance <- function(output, order) {
 
-  meta_cols <- c("sample_count", "target_count", "lambda", "weight")
+  meta_cols <- c("sample_count", "target_count", "lambda", "weight", "base_weight")
   cov_cols <- setdiff(colnames(output), meta_cols)
 
   # build the design matrix from one lambda's unit data
@@ -91,4 +91,3 @@ get_balance_v_sample_size <- function(output, order) {
   
   return(inner_join(imbals, neff, by = "lambda"))
 }
-

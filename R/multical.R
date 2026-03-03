@@ -43,6 +43,11 @@ NULL
 #' @param lambda_min_ratio Numeric. Ratio of min to max lambda to consider.
 #' @param lowlim Lower bound on weights, default 0
 #' @param uplim Upper bound on weights, default Inf
+#' @param base_weights Optional. Name of column in \code{sample_data} giving
+#' individual-level base weights to regularize towards. When supplied, the
+#' regularization penalty becomes
+#' \eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
+#' \eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.
 #' @param verbose Boolean. Show optimization information, default False
 #' @param ... Additional parameters for osqp
 #' 
@@ -56,25 +61,46 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
                       lambda_max = NULL, n_lambda = 20,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
+                      base_weights = NULL,
                       verbose = FALSE, ...) {
 
   # ungroup both inputs if grouped
   if(is_grouped_df(sample_data)) sample_data <- ungroup(sample_data)
   if(is_grouped_df(pop_data))    pop_data    <- ungroup(pop_data)
 
+  # extract base weights from sample_data (must be done before create_units_sep
+  # to preserve 1:1 row correspondence with sample_data)
+  bw_quo <- enquo(base_weights)
+  if(rlang::quo_is_null(bw_quo)) {
+    bw_vec <- rep(1, nrow(sample_data))
+  } else {
+    bw_vec <- sample_data %>% pull(!!bw_quo)
+  }
+
   # build unit-level data frame: respondent rows + pop-only rows
   if(verbose) message("Creating table of unit counts")
   units <- create_units_sep(formula, sample_data, pop_data, enquo(target_count))
   units <- units %>% mutate(.row_id = row_number())
 
+  # pad bw_vec to the full length of `units` (respondents + pop-only rows).
+  # Pop-only rows have sample_count = 0, so their base weight value is never
+  # used in the objective, but the vectors must be the same length.
+  n_pop_only <- sum(units$sample_count == 0)
+  bw_vec_full <- c(bw_vec, rep(1, n_pop_only))
+
+  # attach base_weight as a column so it appears in the output (NA for pop-only)
+  units <- units %>%
+    mutate(base_weight = c(bw_vec, rep(NA_real_, n_pop_only)))
+
   # covariate + count column names (excluding .row_id), used for the final pivot
   unit_cols <- units %>% select(-".row_id") %>% names()
 
   # get weights (one per respondent, i.e. per unit with sample_count != 0)
-  weights <- calibrate_(units %>% select(-c("sample_count", "target_count", ".row_id")),
+  weights <- calibrate_(units %>% select(-c("sample_count", "target_count",
+                                             "base_weight", ".row_id")),
                         units$sample_count, units$target_count,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
-                        lowlim, uplim, verbose, ...)
+                        lowlim, uplim, bw_vec_full, verbose, ...)
 
   # tag weights with the row IDs of respondents for joining back
   respondent_ids <- units %>% filter(.data$sample_count != 0) %>% pull(.data$.row_id)
@@ -198,8 +224,12 @@ create_units_sep <- function(formula, sample_data, pop_data, target_count) {
 calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
                       lambda_min_ratio = 1e-5,
-                      lowlim = 0, uplim = Inf, verbose = FALSE,
+                      lowlim = 0, uplim = Inf, base_weights = NULL,
+                      verbose = FALSE,
                       ...) {
+
+  # default base weights to 1 (recovers standard regularization)
+  if(is.null(base_weights)) base_weights <- rep(1, length(sample_counts))
 
   if(is.null(order)) {
     order <- ncol(cells)
@@ -218,7 +248,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   if(verbose) message("Creating quadratic term matrix")
   if(is.null(lambda) & order > 1) {
     if(is.null(lambda_max)) {
-      unif_imbal <- Matrix::t(D) %*% (sample_counts - target_counts)
+      unif_imbal <- Matrix::t(D) %*% (sample_counts * base_weights - target_counts)
       lambda_max <- sqrt(sum(unif_imbal ^ 2))
     }
     lam_seq <- lambda_max * 10 ^ seq(0, log10(lambda_min_ratio),
@@ -233,7 +263,9 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   
   
   if(verbose) message("Creating linear term vector")
-  qvec <- create_rake_qvec(D, sample_counts, target_counts, lambda)
+  qvec <- create_rake_qvec(D, sample_counts, target_counts,
+                           if(is.null(lambda)) 0 else lambda,
+                           base_weights)
 
 
   settings <- do.call(osqp::osqpSettings,
@@ -253,7 +285,8 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
       if(verbose) message(paste0("Solving with lambda = ", lam_seq[i]))
 
       P_new <- update_rake_Pmat(P, sample_counts, lam_seq[i])
-      solver$Update(Px = Matrix::triu(P_new)@x)
+      q_new <- create_rake_qvec(D, sample_counts, target_counts, lam_seq[i], base_weights)
+      solver$Update(Px = Matrix::triu(P_new)@x, q = q_new)
 
       # use warm start with previous solution to speed up optimization
       solver$WarmStart(x = x, y = y)
@@ -379,12 +412,24 @@ update_rake_Pmat <- function(P, sample_counts, lambda) {
 
 #' Create linear term vector in QP
 #' @inheritParams create_rake_constraints
+#' @param base_weights Vector of base weights for each unit (length = all units
+#' including pop-only rows). Only the respondent entries are used.
 #'
 #' @keywords internal
-create_rake_qvec <- function(D, sample_counts, target_counts, lambda) {
+create_rake_qvec <- function(D, sample_counts, target_counts, lambda,
+                             base_weights = NULL) {
+
+  if(is.null(base_weights)) base_weights <- rep(1, length(sample_counts))
 
   nnz_idxs <- which(sample_counts != 0)
   rhs <- Matrix::t(D) %*% target_counts
   lhs <- D[nnz_idxs,, drop = F] * sample_counts[nnz_idxs]
-  return(-c(as.numeric(lhs %*% rhs)))
+
+  # data-fit term: -D_nz^T * (s_nz * (D_nz * D^T * t))
+  q_fit <- -c(as.numeric(lhs %*% rhs))
+
+  # base-weight regularization term: -lambda * s_i * b_i for each respondent i
+  q_base <- -lambda * sample_counts[nnz_idxs] * base_weights[nnz_idxs]
+
+  return(q_fit + q_base)
 }

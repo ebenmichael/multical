@@ -4,7 +4,7 @@
 \alias{create_rake_qvec}
 \title{Create linear term vector in QP}
 \usage{
-create_rake_qvec(D, sample_counts, target_counts, lambda)
+create_rake_qvec(D, sample_counts, target_counts, lambda, base_weights = NULL)
 }
 \arguments{
 \item{D}{Design matrix, output from \code{\link{create_design_matrix}}}
@@ -12,6 +12,9 @@ create_rake_qvec(D, sample_counts, target_counts, lambda)
 \item{sample_counts}{Vector of sample counts for each cell}
 
 \item{target_counts}{Vector of target counts for each cell}
+
+\item{base_weights}{Vector of base weights for each unit (length = all units
+including pop-only rows). Only the respondent entries are used.}
 }
 \description{
 Create linear term vector in QP

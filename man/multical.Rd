@@ -16,6 +16,7 @@ multical(
   lambda_min_ratio = 1e-05,
   lowlim = 0,
   uplim = Inf,
+  base_weights = NULL,
   verbose = FALSE,
   ...
 )
@@ -51,6 +52,12 @@ lambda_max to lambda_max * lambda_min_ratio, equally spaced on the log scale. De
 \item{lowlim}{Lower bound on weights, default 0}
 
 \item{uplim}{Upper bound on weights, default Inf}
+
+\item{base_weights}{Optional. Name of column in \code{sample_data} giving
+individual-level base weights to regularize towards. When supplied, the
+regularization penalty becomes
+\eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
+\eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.}
 
 \item{verbose}{Boolean. Show optimization information, default False}
 
