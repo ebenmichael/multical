@@ -24,10 +24,17 @@ estimate(object, ...)
 
 \item{...}{Additional arguments to pass to xgboost when \code{method = "drp"}. Ignored for other methods.}
 
-\item{y}{Outcome variable. Can be a bare column name evaluated in
-\code{data} (e.g. \code{estimate(cal, y, data = sample_df)}), or any
-expression that evaluates to a numeric vector of length
-\code{object$n_respondents} (e.g. \code{estimate(cal, sample_df$y)}).}
+\item{y}{Outcome variable. Can be:
+\itemize{
+\item A bare column name evaluated in \code{data}
+(e.g. \code{estimate(cal, y, data = sample_df)})
+\item Any expression that evaluates to a numeric vector of length
+\code{object$n_respondents} (e.g. \code{estimate(cal, sample_df$y)})
+\item A \strong{factor} or \strong{character} vector of length
+\code{object$n_respondents}. Each level is treated as a binary
+indicator and estimated separately. Character vectors are coerced
+to factor (levels in alphabetical order) before processing.
+}}
 
 \item{data}{Optional data frame in which to evaluate \code{y}.}
 
@@ -65,13 +72,18 @@ instead of OLS to fit the outcome model. Ignored for \code{"hajek"} and
 \code{"drp"}. Default \code{FALSE}.}
 }
 \value{
-A one-row data frame with columns:
+A data frame with columns:
 \describe{
-\item{estimate}{Point estimate of the population mean.}
+\item{level}{(Only present when \code{y} is a factor or character.) The
+factor level. Rows are in \code{levels(y)} order.}
+\item{estimate}{Point estimate of the population mean (or proportion for
+a factor/character outcome).}
 \item{se}{Standard error.}
 \item{lambda}{The lambda value used.}
 \item{method}{The estimator name.}
 }
+For numeric \code{y} the data frame has one row. For factor or character
+\code{y} it has one row per level.
 }
 \description{
 Uses either the weighted mean or a model-assisted estimator

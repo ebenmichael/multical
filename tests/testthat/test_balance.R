@@ -400,3 +400,44 @@ test_that("estimate() drp method is reproducible with set.seed()", {
   expect_equal(result1$estimate, result2$estimate)
   expect_equal(result1$se, result2$se)
 })
+
+
+test_that("estimate() handles factor y by estimating each level as a binary outcome", {
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+
+  sample_ind$y_fac <- factor(sample_ind$y, levels = c(0, 1))
+  result <- estimate(cal, y_fac, data = sample_ind)
+
+  y_fac <- sample_ind$y_fac
+  lvls <- levels(y_fac)
+  expect_s3_class(result, "data.frame")
+  expect_equal(nrow(result), length(lvls))
+  expect_named(result, c("level", "estimate", "se", "lambda", "method"))
+  expect_equal(result$level, lvls)
+
+  # each row should match a direct binary-indicator call
+  for (i in seq_along(lvls)) {
+    y_bin    <- as.numeric(y_fac == lvls[i])
+    expected <- estimate(cal, y_bin)
+    expect_equal(result$estimate[i], expected$estimate, tolerance = 1e-10)
+    expect_equal(result$se[i],       expected$se,       tolerance = 1e-10)
+  }
+})
+
+
+test_that("estimate() coerces character y to factor and gives the same result", {
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+  sample_ind$y_fac <- factor(sample_ind$y, levels = c(0, 1))
+  y_chr <- as.character(sample_ind$y_fac)
+
+  result_fac <- estimate(cal, y_fac, data = sample_ind)
+  result_chr <- estimate(cal, y_chr, data = sample_ind)
+
+  expect_equal(result_fac, result_chr)
+})
+
+
+test_that("estimate() errors for non-numeric, non-factor, non-character y", {
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+  expect_error(estimate(cal, as.list(sample_ind$y)), "`y` must evaluate to")
+})

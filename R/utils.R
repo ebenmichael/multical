@@ -266,10 +266,17 @@ estimate <- function(object, ...) UseMethod("estimate")
 
 #' @describeIn estimate Method for \code{multical} objects
 #'
-#' @param y Outcome variable. Can be a bare column name evaluated in
-#'   \code{data} (e.g. \code{estimate(cal, y, data = sample_df)}), or any
-#'   expression that evaluates to a numeric vector of length
-#'   \code{object$n_respondents} (e.g. \code{estimate(cal, sample_df$y)}).
+#' @param y Outcome variable. Can be:
+#'   \itemize{
+#'     \item A bare column name evaluated in \code{data}
+#'       (e.g. \code{estimate(cal, y, data = sample_df)})
+#'     \item Any expression that evaluates to a numeric vector of length
+#'       \code{object$n_respondents} (e.g. \code{estimate(cal, sample_df$y)})
+#'     \item A \strong{factor} or \strong{character} vector of length
+#'       \code{object$n_respondents}. Each level is treated as a binary
+#'       indicator and estimated separately. Character vectors are coerced
+#'       to factor (levels in alphabetical order) before processing.
+#'   }
 #' @param data Optional data frame in which to evaluate \code{y}.
 #' @param method Character string selecting the estimator:
 #'   \describe{
@@ -301,13 +308,18 @@ estimate <- function(object, ...) UseMethod("estimate")
 #'   \code{"drp"}. Default \code{FALSE}.
 #' @param ... Additional arguments to pass to xgboost when \code{method = "drp"}. Ignored for other methods.
 #'
-#' @return A one-row data frame with columns:
+#' @return A data frame with columns:
 #' \describe{
-#'   \item{estimate}{Point estimate of the population mean.}
+#'   \item{level}{(Only present when \code{y} is a factor or character.) The
+#'     factor level. Rows are in \code{levels(y)} order.}
+#'   \item{estimate}{Point estimate of the population mean (or proportion for
+#'     a factor/character outcome).}
 #'   \item{se}{Standard error.}
 #'   \item{lambda}{The lambda value used.}
 #'   \item{method}{The estimator name.}
 #' }
+#' For numeric \code{y} the data frame has one row. For factor or character
+#' \code{y} it has one row per level.
 #' @method estimate multical
 #' @export
 estimate.multical <- function(object, y, data = NULL, method = "linearized",
@@ -316,7 +328,29 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
   y_quo <- enquo(y)
   y_vec <- eval_tidy(y_quo, data = data)
 
-  if (!is.numeric(y_vec)) stop("`y` must evaluate to a numeric vector.")
+  # coerce character to factor; then fan out over levels
+  if (is.character(y_vec)) y_vec <- factor(y_vec)
+  if (is.factor(y_vec)) {
+    if (length(y_vec) != object$n_respondents) {
+      stop("`y` must have one value per respondent (",
+           object$n_respondents, " expected, ",
+           length(y_vec), " supplied).")
+    }
+    lvls <- levels(y_vec)
+    results <- lapply(lvls, function(lvl) {
+      y_bin <- as.numeric(y_vec == lvl)
+      out   <- estimate.multical(object, y_bin, data = NULL,
+                                 method = method,
+                                 lambda_idx = lambda_idx,
+                                 balance_threshold = balance_threshold,
+                                 order = order,
+                                 use_ridge = use_ridge, ...)
+      cbind(level = lvl, out, stringsAsFactors = FALSE)
+    })
+    return(do.call(rbind, results))
+  }
+
+  if (!is.numeric(y_vec)) stop("`y` must evaluate to a numeric, factor, or character vector.")
   if (length(y_vec) != object$n_respondents) {
     stop("`y` must have one value per respondent (",
          object$n_respondents, " expected, ",
