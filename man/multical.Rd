@@ -6,8 +6,9 @@
 \usage{
 multical(
   formula,
-  target_count,
-  data,
+  sample_data,
+  pop_data,
+  target_count = NULL,
   order = NULL,
   lambda = NULL,
   lambda_max = NULL,
@@ -15,21 +16,25 @@ multical(
   lambda_min_ratio = 1e-05,
   lowlim = 0,
   uplim = Inf,
+  base_weights = NULL,
   verbose = FALSE,
   ...
 )
 }
 \arguments{
-\item{formula}{Formula of the form \code{sample_count ~ covariates}, where
-\code{sample_count} is whether or not an individual responded
-(with individual-level data) or the number of respondents in the cell
-(with cell-level data) and \code{covariates} are the covariates to calibrate
-on}
+\item{formula}{Right-hand-side formula of the form \code{~ covariates}
+specifying the covariates to calibrate on}
 
-\item{target_count}{Name of column with indicators for whether an individual
-is in the target population (with individual-level data) or the target counts for each cell (with cell-level data)}
+\item{sample_data}{Individual-level data frame of respondents. One row per
+respondent; each row receives sample weight 1 in the optimization.}
 
-\item{data}{Dataframe with covariate information, sample and target counts}
+\item{pop_data}{Data frame describing the target population. Can be
+individual-level (one row per population member) or pre-aggregated to
+the cell level. Cells present in \code{pop_data} but absent from
+\code{sample_data} are handled automatically.}
+
+\item{target_count}{Optional. Name of column in \code{pop_data} giving the
+count or weight for each row. Defaults to 1 per row (row-count semantics).}
 
 \item{order}{Integer. What order interactions to balance. Default is all orders}
 
@@ -48,16 +53,35 @@ lambda_max to lambda_max * lambda_min_ratio, equally spaced on the log scale. De
 
 \item{uplim}{Upper bound on weights, default Inf}
 
+\item{base_weights}{Optional. Name of column in \code{sample_data} giving
+individual-level base weights to regularize towards. When supplied, the
+regularization penalty becomes
+\eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
+\eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.}
+
 \item{verbose}{Boolean. Show optimization information, default False}
 
 \item{...}{Additional parameters for osqp}
 }
 \value{
-data frame with the weight for each distinct cell, for each value of
-the hyperparameter \code{lambda}. Note: the output data frame may have the
-cells in a different order than in \code{data}. Be sure to join the output
-with \code{data} on the variables to map the weights to the data accurately.
+A \code{multical} object with the following fields:
+\itemize{
+\item \code{weights}: numeric matrix (n_respondents x n_lambdas) of
+calibration weights, column names are lambda values
+\item \code{lambda}: numeric vector of lambda values
+\item \code{cells}: data frame with covariate columns plus
+\code{sample_count}, \code{target_count}, and \code{base_weight};
+includes pop-only rows (\code{sample_count = 0})
+\item \code{formula}: the formula passed to \code{multical}
+\item \code{order}: resolved order of interactions used
+\item \code{n_respondents}: number of respondents
+\item \code{default_lambda_idx}: index of the auto-selected best lambda
+\item \code{balance_threshold}: threshold used for lambda selection
+}
+Use \code{\link{weights}} to extract respondent weights at the default
+lambda, and \code{\link{get_balance}} to assess calibration quality.
 }
 \description{
-Finds weights that exactly calibrate first order margins between respondents and the target population. Requires individual-level of cell-level data.
+Finds weights that exactly calibrate first order margins between respondents
+and the target population, operating at the individual level.
 }

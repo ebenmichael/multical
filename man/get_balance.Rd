@@ -4,12 +4,14 @@
 \alias{get_balance}
 \title{Get the difference between the reweighted sample and the target}
 \usage{
-get_balance(output, order)
+get_balance(x, order, ...)
 }
 \arguments{
-\item{output}{Output of \code{\link{multical}}}
+\item{x}{A \code{\link{multical}} object}
 
 \item{order}{Integer. Order of interactions to include in the balance measure}
+
+\item{...}{Additional arguments (unused)}
 }
 \value{
 A data frame with the difference for each term and value of the
@@ -17,5 +19,5 @@ hyper-parameter
 }
 \description{
 For each interaction term, computes the difference between the reweighted
-sample count and the target count
+sample count and the target count.
 }

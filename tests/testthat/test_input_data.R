@@ -1,15 +1,25 @@
-context("Test that multical handles input data well")
-
 data(data_individual)
 
-test_that("multical runs with grouped data", {
+test_that("multical runs with grouped sample data", {
 
-  tmpdat <- data_individual %>% group_by(across(contains("X"))) %>%
-    summarise(sample_count = sum(response), target_count = sum(intarget),
-              y = mean(y))
+  sample_grp <- data_individual %>%
+    filter(response == 1) %>%
+    group_by(across(contains("X")))
 
-  expect_error(multical(sample_count ~ X1 + X2 + X3 + X4, target_count, tmpdat, 
+  pop_ind <- data_individual
+
+  expect_error(multical(~ X1 + X2 + X3 + X4, sample_grp, pop_ind,
                         order = 1, eps_rel = 1e-10, eps_abs = 1e-10),
                NA)
+})
 
+test_that("multical runs with grouped population data", {
+
+  sample_ind <- data_individual %>% filter(response == 1)
+
+  pop_grp <- data_individual %>% group_by(across(contains("X")))
+
+  expect_error(multical(~ X1 + X2 + X3 + X4, sample_ind, pop_grp,
+                        order = 1, eps_rel = 1e-10, eps_abs = 1e-10),
+               NA)
 })

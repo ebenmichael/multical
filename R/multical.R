@@ -13,23 +13,35 @@
 #' @importFrom stats terms
 #' @importFrom stats formula
 #' @importFrom stats as.formula
+#' @importFrom stats weights
+#' @importFrom stats lm.fit
+#' @importFrom stats model.matrix
+#' @importFrom stats predict
+#' @importFrom glmnet cv.glmnet
 #' @importFrom rlang .data
+#' @importFrom rlang eval_tidy
+#' @importFrom rlang enquo
+#' @importFrom xgboost xgboost
+#' @importFrom xgboost xgb.cv
 NULL
 
 
 
 #' Calibrate sample to target via multilevel calibration
 #'
-#' Finds weights that exactly calibrate first order margins between respondents and the target population. Requires individual-level of cell-level data.
+#' Finds weights that exactly calibrate first order margins between respondents
+#' and the target population, operating at the individual level.
 #'
-#' @param formula Formula of the form \code{sample_count ~ covariates}, where 
-#' \code{sample_count} is whether or not an individual responded 
-#' (with individual-level data) or the number of respondents in the cell 
-#' (with cell-level data) and \code{covariates} are the covariates to calibrate 
-#' on
-#' @param target_count Name of column with indicators for whether an individual 
-#' is in the target population (with individual-level data) or the target counts for each cell (with cell-level data)
-#' @param data Dataframe with covariate information, sample and target counts
+#' @param formula Right-hand-side formula of the form \code{~ covariates}
+#' specifying the covariates to calibrate on
+#' @param sample_data Individual-level data frame of respondents. One row per
+#' respondent; each row receives sample weight 1 in the optimization.
+#' @param pop_data Data frame describing the target population. Can be
+#' individual-level (one row per population member) or pre-aggregated to
+#' the cell level. Cells present in \code{pop_data} but absent from
+#' \code{sample_data} are handled automatically.
+#' @param target_count Optional. Name of column in \code{pop_data} giving the
+#' count or weight for each row. Defaults to 1 per row (row-count semantics).
 #' @param order Integer. What order interactions to balance. Default is all orders
 #' @param lambda Numeric. Regularization hyperparamter, by default fits weights 
 #' for a range of values
@@ -40,47 +52,124 @@ NULL
 #' @param lambda_min_ratio Numeric. Ratio of min to max lambda to consider.
 #' @param lowlim Lower bound on weights, default 0
 #' @param uplim Upper bound on weights, default Inf
+#' @param base_weights Optional. Name of column in \code{sample_data} giving
+#' individual-level base weights to regularize towards. When supplied, the
+#' regularization penalty becomes
+#' \eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
+#' \eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.
 #' @param verbose Boolean. Show optimization information, default False
 #' @param ... Additional parameters for osqp
 #' 
-#' @return data frame with the weight for each distinct cell, for each value of 
-#' the hyperparameter \code{lambda}. Note: the output data frame may have the 
-#' cells in a different order than in \code{data}. Be sure to join the output 
-#' with \code{data} on the variables to map the weights to the data accurately.
+#' @return A \code{multical} object with the following fields:
+#' \itemize{
+#'   \item \code{weights}: numeric matrix (n_respondents x n_lambdas) of
+#'     calibration weights, column names are lambda values
+#'   \item \code{lambda}: numeric vector of lambda values
+#'   \item \code{cells}: data frame with covariate columns plus
+#'     \code{sample_count}, \code{target_count}, and \code{base_weight};
+#'     includes pop-only rows (\code{sample_count = 0})
+#'   \item \code{formula}: the formula passed to \code{multical}
+#'   \item \code{order}: resolved order of interactions used
+#'   \item \code{n_respondents}: number of respondents
+#'   \item \code{default_lambda_idx}: index of the auto-selected best lambda
+#'   \item \code{balance_threshold}: threshold used for lambda selection
+#' }
+#' Use \code{\link{weights}} to extract respondent weights at the default
+#' lambda, and \code{\link{get_balance}} to assess calibration quality.
 #'
 #' @export
-multical <- function(formula, target_count, data,
+multical <- function(formula, sample_data, pop_data, target_count = NULL,
                       order = NULL, lambda = NULL,
                       lambda_max = NULL, n_lambda = 20,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
+                      base_weights = NULL,
                       verbose = FALSE, ...) {
 
-  # check if data is grouped and ungroup if it is, otherwise weird stuff happens!
-  if(is_grouped_df(data)) {
-    data <- ungroup(data)
+  # ungroup both inputs if grouped
+  if(is_grouped_df(sample_data)) sample_data <- ungroup(sample_data)
+  if(is_grouped_df(pop_data))    pop_data    <- ungroup(pop_data)
+
+  # extract base weights from sample_data (must be done before create_units_sep
+  # to preserve 1:1 row correspondence with sample_data)
+  bw_quo <- enquo(base_weights)
+  if(rlang::quo_is_null(bw_quo)) {
+    bw_vec <- rep(1, nrow(sample_data))
+  } else {
+    bw_vec <- sample_data %>% pull(!!bw_quo)
   }
 
-  # create distinct cells for all interactions
-  if(verbose) message("Creating table of cell counts")
-  cells <- create_cells(formula, enquo(target_count), data)
+  # build unit-level data frame: respondent rows + pop-only rows
+  if(verbose) message("Creating table of unit counts")
+  units <- create_units_sep(formula, sample_data, pop_data, enquo(target_count))
+  units <- units %>% mutate(.row_id = row_number())
 
-  # get weights
-  weights <- calibrate_(cells %>% select(-c("sample_count", "target_count")),
-                        cells$sample_count, cells$target_count,
+  # pad bw_vec to the full length of `units` (respondents + pop-only rows).
+  # Pop-only rows have sample_count = 0, so their base weight value is never
+  # used in the objective, but the vectors must be the same length.
+  n_pop_only <- sum(units$sample_count == 0)
+  bw_vec_full <- c(bw_vec, rep(1, n_pop_only))
+
+  # attach base_weight as a column so it appears in the output (NA for pop-only)
+  units <- units %>%
+    mutate(base_weight = c(bw_vec, rep(NA_real_, n_pop_only)))
+
+  # resolve order now so it can be stored in the multical object
+  if (is.null(order)) order <- length(all.vars(formula))
+
+  # get weights (one per respondent, i.e. per unit with sample_count != 0)
+  weights <- calibrate_(units %>% select(-c("sample_count", "target_count",
+                                             "base_weight", ".row_id")),
+                        units$sample_count, units$target_count,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
-                        lowlim, uplim, verbose, ...)
-  # combine back in and return
-  cells %>% filter(.data$sample_count != 0) %>%
-    bind_cols(weights) %>%
-    select(-c("sample_count", "target_count")) %>%
-    right_join(cells,
-               by = cells %>% select(-c("sample_count", "target_count")) %>%
-                    names()) %>%
-    pivot_longer(!names(cells), names_to = "lambda", values_to = "weight") %>%
-    mutate(weight = replace_na(.data$weight, 0),
-           lambda = as.numeric(.data$lambda)) %>%
-    return()
+                        lowlim, uplim, bw_vec_full, verbose, ...)
+
+  # extract the weights matrix (respondents only, rows in sample_data order)
+  weights_matrix <- as.matrix(weights)
+  lam_vec <- as.numeric(colnames(weights_matrix))
+
+  # cells = units without the internal row-id helper column;
+  # pop-only rows (sample_count = 0) are retained so that get_balance() can
+  # compute correct marginal targets.
+  cells <- units %>% select(-".row_id")
+
+  new_multical(weights_matrix, lam_vec, cells, formula, order)
+}
+
+
+#' Construct a multical object
+#'
+#' @param weights_matrix Numeric matrix (n_respondents x n_lambdas) of
+#'   calibration weights. Column names are the lambda values.
+#' @param lambda Numeric vector of lambda values.
+#' @param cells Data frame with covariate columns, \code{sample_count},
+#'   \code{target_count}, and \code{base_weight}. One row per respondent
+#'   followed by one row per pop-only cell.
+#' @param formula The formula passed to \code{\link{multical}}.
+#' @param order Integer. Resolved order of interactions used in the calibration.
+#' @param balance_threshold Numeric in (0, 1). Fraction of the total possible
+#'   balance gain required to qualify a lambda for selection. Default 0.9.
+#'
+#' @keywords internal
+new_multical <- function(weights_matrix, lambda, cells, formula, order,
+                         balance_threshold = 0.9) {
+  n_respondents <- sum(cells$sample_count != 0)
+  default_lambda_idx <- select_default_lambda(
+    weights_matrix, cells, lambda, order, balance_threshold
+  )
+  structure(
+    list(
+      weights            = weights_matrix,
+      lambda             = lambda,
+      cells              = cells,
+      formula            = formula,
+      order              = order,
+      n_respondents      = n_respondents,
+      default_lambda_idx = default_lambda_idx,
+      balance_threshold  = balance_threshold
+    ),
+    class = "multical"
+  )
 }
 
 
@@ -102,6 +191,83 @@ create_cells <- function(formula, target_count, data) {
 }
 
 
+#' Create data frame with one row per unit (no aggregation), with sample and target indicators
+#' @inheritParams multical
+#'
+#' @keywords internal
+create_units <- function(formula, target_count, data) {
+  covs <- all.vars(terms(Formula::Formula(formula), rhs = 1)[[3]])
+  sample_count <- terms(Formula::Formula(formula), rhs = 1)[[2]]
+  units <- data %>%
+    mutate(across(all_of(covs), as.factor),
+           sample_count = !!sample_count,
+           target_count = !!target_count) %>%
+    select(all_of(covs), sample_count, target_count)
+
+  return(units)
+}
+
+
+#' Build the combined unit-level data frame from separate sample and population data
+#'
+#' Returns one row per respondent (\code{sample_count = 1},
+#' \code{target_count = pop_count_cell / n_respondents_cell}) followed by one
+#' row per population-only cell (\code{sample_count = 0},
+#' \code{target_count = pop_count_cell}). Population-only rows have no
+#' optimization variables but contribute to the RHS of the marginal constraints.
+#'
+#' @param formula Right-hand-side formula specifying covariates
+#' @param sample_data Individual-level respondent data frame
+#' @param pop_data Population data frame (individual or cell level)
+#' @param target_count Quosure of the target count column in \code{pop_data},
+#' or a null quosure to use row counts
+#'
+#' @keywords internal
+create_units_sep <- function(formula, sample_data, pop_data, target_count) {
+
+  covs <- all.vars(formula)
+
+  # cast covariates to factors in both datasets
+  pop_data    <- pop_data    %>% mutate(across(all_of(covs), as.factor))
+  sample_data <- sample_data %>% mutate(across(all_of(covs), as.factor))
+
+  # aggregate pop_data to one count per cell
+  if(rlang::quo_is_null(target_count)) {
+    pop_agg <- pop_data %>%
+      group_by(across(all_of(covs))) %>%
+      summarise(.pop_count = n(), .groups = "drop")
+  } else {
+    pop_agg <- pop_data %>%
+      group_by(across(all_of(covs))) %>%
+      summarise(.pop_count = sum(!!target_count), .groups = "drop")
+  }
+
+  # count respondents per cell
+  sample_agg <- sample_data %>%
+    group_by(across(all_of(covs))) %>%
+    summarise(.n_respondents = n(), .groups = "drop")
+
+  # respondent rows: sample_count = 1, target_count = pop_count / n_respondents
+  # (cells absent from pop_data get target_count = 0)
+  respondent_units <- sample_data %>%
+    left_join(pop_agg,    by = covs) %>%
+    left_join(sample_agg, by = covs) %>%
+    mutate(sample_count = 1L,
+           target_count = replace_na(.data$.pop_count, 0) / .data$.n_respondents) %>%
+    select(all_of(covs), "sample_count", "target_count")
+
+  # population-only rows: cells present in pop but absent from sample
+  # sample_count = 0; they contribute to constraint RHS but have no weight variable
+  pop_only <- pop_agg %>%
+    anti_join(sample_agg, by = covs) %>%
+    mutate(sample_count = 0L,
+           target_count = .data$.pop_count) %>%
+    select(all_of(covs), "sample_count", "target_count")
+
+  bind_rows(respondent_units, pop_only)
+}
+
+
 #' Internal function to perform multilevel calibration
 #' @param cells Dataframe of distinct cells
 #' @param sample_counts Vector of sample counts for each cell
@@ -112,8 +278,12 @@ create_cells <- function(formula, target_count, data) {
 calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
                       lambda_min_ratio = 1e-5,
-                      lowlim = 0, uplim = Inf, verbose = FALSE,
+                      lowlim = 0, uplim = Inf, base_weights = NULL,
+                      verbose = FALSE,
                       ...) {
+
+  # default base weights to 1 (recovers standard regularization)
+  if(is.null(base_weights)) base_weights <- rep(1, length(sample_counts))
 
   if(is.null(order)) {
     order <- ncol(cells)
@@ -132,7 +302,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   if(verbose) message("Creating quadratic term matrix")
   if(is.null(lambda) & order > 1) {
     if(is.null(lambda_max)) {
-      unif_imbal <- Matrix::t(D) %*% (sample_counts - target_counts)
+      unif_imbal <- Matrix::t(D) %*% (sample_counts * base_weights - target_counts)
       lambda_max <- sqrt(sum(unif_imbal ^ 2))
     }
     lam_seq <- lambda_max * 10 ^ seq(0, log10(lambda_min_ratio),
@@ -147,7 +317,9 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   
   
   if(verbose) message("Creating linear term vector")
-  qvec <- create_rake_qvec(D, sample_counts, target_counts, lambda)
+  qvec <- create_rake_qvec(D, sample_counts, target_counts,
+                           if(is.null(lambda)) 0 else lambda,
+                           base_weights)
 
 
   settings <- do.call(osqp::osqpSettings,
@@ -167,19 +339,20 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
       if(verbose) message(paste0("Solving with lambda = ", lam_seq[i]))
 
       P_new <- update_rake_Pmat(P, sample_counts, lam_seq[i])
-      solver$Update(Px = Matrix::triu(P_new)@x)
+      q_new <- create_rake_qvec(D, sample_counts, target_counts, lam_seq[i], base_weights)
+      solver$Update(Px = Matrix::triu(P_new)@x, q = q_new)
 
       # use warm start with previous solution to speed up optimization
       solver$WarmStart(x = x, y = y)
       sol_lam <- solver$Solve()
       x <- sol_lam$x
       y <- sol_lam$y
-      solution[, i] <- x
+      solution[, i] <- pmin(pmax(lowlim, x), uplim)
     }
     solution <- as.data.frame(solution)
     names(solution) <- lam_seq
   } else {
-    solution <- data.frame(solver$Solve()$x)
+    solution <- data.frame(pmin(pmax(lowlim, solver$Solve()$x), uplim))
     names(solution) <- lambda
   }
   return(solution)
@@ -293,12 +466,24 @@ update_rake_Pmat <- function(P, sample_counts, lambda) {
 
 #' Create linear term vector in QP
 #' @inheritParams create_rake_constraints
+#' @param base_weights Vector of base weights for each unit (length = all units
+#' including pop-only rows). Only the respondent entries are used.
 #'
 #' @keywords internal
-create_rake_qvec <- function(D, sample_counts, target_counts, lambda) {
+create_rake_qvec <- function(D, sample_counts, target_counts, lambda,
+                             base_weights = NULL) {
+
+  if(is.null(base_weights)) base_weights <- rep(1, length(sample_counts))
 
   nnz_idxs <- which(sample_counts != 0)
   rhs <- Matrix::t(D) %*% target_counts
   lhs <- D[nnz_idxs,, drop = F] * sample_counts[nnz_idxs]
-  return(-c(as.numeric(lhs %*% rhs)))
+
+  # data-fit term: -D_nz^T * (s_nz * (D_nz * D^T * t))
+  q_fit <- -c(as.numeric(lhs %*% rhs))
+
+  # base-weight regularization term: -lambda * s_i * b_i for each respondent i
+  q_base <- -lambda * sample_counts[nnz_idxs] * base_weights[nnz_idxs]
+
+  return(q_fit + q_base)
 }

@@ -15,16 +15,19 @@ Imports:
   tidyr,
   Formula,
   magrittr,
-  rlang
+  rlang,
+  glmnet,
+  xgboost
 Suggests:
     rmarkdown,
     knitr,
+    ggplot2,
     testthat (>= 3.0.0)
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.1
+RoxygenNote: 7.2.3
 Depends: 
     R (>= 2.10)
 Config/testthat/edition: 3
