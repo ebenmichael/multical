@@ -97,12 +97,11 @@ We can inspect marginal balance using `get_balance`:
 get_balance(out, 1)
 ```
 
-To estimate the population average, extract weights and take the weighted mean:
+To estimate the population mean of an outcome, use the `estimate()` function
+(defaults to the linearized estimator — see the [Estimating population means](#estimating-population-means-with-estimate) section below for all options):
 
 ```{r estimate_indiv_rake}
-sample_ind %>%
-  mutate(weight = weights(out)) %>%
-  summarise(estimate = sum(weight * y) / sum(weight))
+estimate(out, y, data = sample_ind)
 ```
 
 ### Higher-order calibration with a fixed lambda
@@ -141,10 +140,97 @@ out <- multical(~ X1 + X2 + X3 + X4, sample_ind, data_cell,
                 order = 4, lambda = 1)
 ```
 
-Estimation works the same way — extract weights and take the weighted mean:
+Estimation works the same way (using the default linearized estimator):
 
 ```{r multical_cell_estimate}
-sample_ind %>%
-  mutate(weight = weights(out)) %>%
-  summarise(estimate = sum(weight * y) / sum(weight))
+estimate(out, y, data = sample_ind)
+```
+
+
+## Estimating population means with `estimate()`
+
+The `estimate()` function computes a population mean estimate and a
+linearization-based standard error from a fitted `multical` object. The
+`method` argument selects the estimator:
+
+| Method | Description |
+|--------|-------------|
+| `"linearized"` (default) | Point estimate is the weighted mean. Standard errors are the residuals of an OLS or ridge regression of the outcome on interactions up to the specified order. |
+| `"hajek"` | Point estimate is the weighted mean. Standard error is the standard sandwich standard error.|
+| `"greg"` | GREG estimator; uses OLS/ridge regression for model assistance to reduce bias. Standard errors are based off the residuals of the regression |
+| `"drp"` | Double regression and post-stratification; the same implementation as `"greg"` but uses cross-fitted gradient-boosted trees (xgboost) for the outcome model. |
+
+All methods return a one-row data frame with columns `estimate`, `se`, `lambda`,
+and `method`.
+
+```{r estimate_setup}
+out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4)
+```
+
+### Linearized estimator (default)
+
+The default. Fits an OLS model of `y` on the covariate design matrix and uses
+the residuals in the SE formula.
+The `order` argument sets the interaction order in the regression (defaults to 1).
+
+```{r estimate_linearized}
+estimate(out, y, data = sample_ind)
+```
+
+You can set the interaction order explicitly:
+
+```{r estimate_linearized_order}
+estimate(out, y, data = sample_ind, method = "linearized", order = 2)
+```
+
+Pass `use_ridge = TRUE` to fit the outcome model with ridge regression instead
+(penalty chosen by 10-fold cross-validation via `glmnet`):
+
+```{r estimate_linearized_ridge}
+estimate(out, y, data = sample_ind, method = "linearized", order = 2,
+         use_ridge = TRUE)
+```
+
+### Hajek estimator
+
+Returns the calibration-weighted mean of `y` and a  standard sandwich SE,
+without any regression adjustment.
+
+```{r estimate_hajek}
+estimate(out, y, data = sample_ind, method = "hajek")
+```
+
+### GREG estimator
+
+The GREG estimator uses regression predictions on the target population to form
+the point estimate. The `order` and `use_ridge` arguments work the same way as for
+`"linearized"`.
+
+```{r estimate_greg}
+estimate(out, y, data = sample_ind, method = "greg", order = 2)
+```
+
+### DRP estimator
+
+The double regression and post-stratification (DRP) estimator replaces the parametric regression
+with cross-fitted gradient-boosted trees (xgboost). Additional arguments
+(e.g. `nrounds`, `eta`) are forwarded directly to `xgboost`.
+
+```{r estimate_drp, eval = requireNamespace("xgboost", quietly = TRUE)}
+estimate(out, y, data = sample_ind, method = "drp", nrounds = 200)
+```
+
+### Selecting lambda
+
+By default `estimate()` uses the auto-selected default lambda (the one that
+achieves at least 90% of the possible balance gain). You can override this with
+`lambda_idx` (an integer index into `out$lambda`) or `balance_threshold` (a
+value in (0, 1) that re-runs lambda selection):
+
+```{r estimate_lambda}
+# use the weights at index 5 in the lambda grid
+estimate(out, y, data = sample_ind, lambda_idx = 5)
+
+# re-select lambda targeting 95% balance gain
+estimate(out, y, data = sample_ind, balance_threshold = 0.95)
 ```

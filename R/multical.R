@@ -14,7 +14,15 @@
 #' @importFrom stats formula
 #' @importFrom stats as.formula
 #' @importFrom stats weights
+#' @importFrom stats lm.fit
+#' @importFrom stats model.matrix
+#' @importFrom stats predict
+#' @importFrom glmnet cv.glmnet
 #' @importFrom rlang .data
+#' @importFrom rlang eval_tidy
+#' @importFrom rlang enquo
+#' @importFrom xgboost xgboost
+#' @importFrom xgboost xgb.cv
 NULL
 
 
@@ -246,7 +254,7 @@ create_units_sep <- function(formula, sample_data, pop_data, target_count) {
     left_join(sample_agg, by = covs) %>%
     mutate(sample_count = 1L,
            target_count = replace_na(.data$.pop_count, 0) / .data$.n_respondents) %>%
-    select(all_of(covs), sample_count, target_count)
+    select(all_of(covs), "sample_count", "target_count")
 
   # population-only rows: cells present in pop but absent from sample
   # sample_count = 0; they contribute to constraint RHS but have no weight variable
@@ -254,7 +262,7 @@ create_units_sep <- function(formula, sample_data, pop_data, target_count) {
     anti_join(sample_agg, by = covs) %>%
     mutate(sample_count = 0L,
            target_count = .data$.pop_count) %>%
-    select(all_of(covs), sample_count, target_count)
+    select(all_of(covs), "sample_count", "target_count")
 
   bind_rows(respondent_units, pop_only)
 }

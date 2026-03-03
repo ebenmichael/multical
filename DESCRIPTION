@@ -15,7 +15,9 @@ Imports:
   tidyr,
   Formula,
   magrittr,
-  rlang
+  rlang,
+  glmnet,
+  xgboost
 Suggests:
     rmarkdown,
     knitr,

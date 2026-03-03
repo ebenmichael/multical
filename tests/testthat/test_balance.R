@@ -224,3 +224,179 @@ test_that("weights() returns weights at the correct default lambda", {
   expect_true(all(w >= 0))
   expect_true(all(is.finite(w)))
 })
+
+
+test_that("estimate() returns correct point estimate and SE for Hajek method", {
+
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+
+  # --- via bare column name + data argument ---
+  result_data <- estimate(cal, y, data = sample_ind, method = "hajek")
+
+  w   <- weights(cal)
+  est <- sum(w * sample_ind$y) / sum(w)
+  se  <- sqrt(sum(w ^ 2 * (sample_ind$y - est) ^ 2)) / sum(w)
+
+  expect_equal(result_data$estimate, est, tolerance = 1e-10)
+  expect_equal(result_data$se, se, tolerance = 1e-10)
+  expect_equal(result_data$method, "hajek")
+  expect_equal(result_data$lambda, cal$lambda[cal$default_lambda_idx])
+  expect_equal(nrow(result_data), 1L)
+
+  # --- via inline vector expression (no data argument) ---
+  result_vec <- estimate(cal, sample_ind$y, method = "hajek")
+  expect_equal(result_vec$estimate, est, tolerance = 1e-10)
+
+  # SE should be positive and finite
+  expect_gt(result_data$se, 0)
+  expect_true(is.finite(result_data$se))
+})
+
+
+test_that("estimate() respects lambda_idx and balance_threshold overrides", {
+
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 4, eps_rel = 1e-8, eps_abs = 1e-8)
+
+  # explicit lambda_idx
+  idx <- 5L
+  result_idx <- estimate(cal, sample_ind$y, lambda_idx = idx)
+  w_idx <- weights(cal, lambda_idx = idx)
+  expect_equal(result_idx$estimate,
+               sum(w_idx * sample_ind$y) / sum(w_idx), tolerance = 1e-10)
+  expect_equal(result_idx$lambda, cal$lambda[idx])
+
+  # balance_threshold override
+  result_bt <- estimate(cal, sample_ind$y, balance_threshold = 0.5)
+  idx_bt <- select_default_lambda(
+    cal$weights, cal$cells, cal$lambda, cal$order, 0.5
+  )
+  w_bt <- weights(cal, lambda_idx = idx_bt)
+  expect_equal(result_bt$estimate,
+               sum(w_bt * sample_ind$y) / sum(w_bt), tolerance = 1e-10)
+})
+
+
+test_that("estimate() linearized method gives correct point estimate and smaller SE when y is correlated with covariates", {
+
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 4)
+
+  result_linearized <- estimate(cal, y, data = sample_ind, method = "linearized",
+                                order = 4)
+
+  # Point estimate is still the weighted mean
+  w   <- weights(cal)
+  est <- sum(w * sample_ind$y) / sum(w)
+  expect_equal(result_linearized$estimate, est, tolerance = 1e-10)
+  expect_equal(result_linearized$method, "linearized")
+  expect_equal(result_linearized$lambda, cal$lambda[cal$default_lambda_idx])
+
+  # SE must be positive and finite
+  expect_gt(result_linearized$se, 0)
+  expect_true(is.finite(result_linearized$se))
+
+  # Manually verify SE using regression residuals at reg_order = order = 4
+  cov_cols   <- setdiff(colnames(cal$cells),
+                        c("sample_count", "target_count", "base_weight"))
+  cells_resp <- cal$cells[cal$cells$sample_count != 0, cov_cols, drop = FALSE]
+  X      <- model.matrix(~ .^4, data = cells_resp)
+  resids <- lm.fit(X, sample_ind$y)$residuals
+  se_manual <- sqrt(sum(w ^ 2 * resids ^ 2)) / sum(w)
+  expect_equal(result_linearized$se, se_manual, tolerance = 1e-10)
+
+  # Linearized SE should be <= Hajek SE when y is correlated with covariates
+  result_hajek <- estimate(cal, y, data = sample_ind, method = "hajek")
+  expect_lte(result_linearized$se, result_hajek$se)
+})
+
+
+test_that("estimate() linearized method with use_ridge uses glmnet CV residuals", {
+
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+  w <- weights(cal)
+
+  # use_ridge = FALSE (default) should match plain OLS
+  result_ols   <- estimate(cal, y, data = sample_ind, method = "linearized")
+  result_noridge <- estimate(cal, y, data = sample_ind,
+                             method = "linearized", use_ridge = FALSE)
+  expect_equal(result_noridge$se, result_ols$se, tolerance = 1e-10)
+
+  # use_ridge = TRUE: verify manually using cv.glmnet
+  cov_cols   <- setdiff(colnames(cal$cells),
+                        c("sample_count", "target_count", "base_weight"))
+  cells_resp <- cal$cells[cal$cells$sample_count != 0, cov_cols, drop = FALSE]
+  X        <- model.matrix(~ ., data = cells_resp)
+  X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+
+  set.seed(1011)
+  cv_fit   <- glmnet::cv.glmnet(X_noInt, sample_ind$y, alpha = 0)
+  fitted   <- as.numeric(predict(cv_fit, newx = X_noInt, s = "lambda.min"))
+  resids   <- sample_ind$y - fitted
+  se_manual <- sqrt(sum(w ^ 2 * resids ^ 2)) / sum(w)
+
+  set.seed(1011)
+  result_ridge <- estimate(cal, y, data = sample_ind,
+                           method = "linearized", use_ridge = TRUE)
+
+  expect_equal(result_ridge$se, se_manual, tolerance = 1e-10)
+  expect_equal(result_ridge$estimate,
+               sum(w * sample_ind$y) / sum(w), tolerance = 1e-10)
+  expect_gt(result_ridge$se, 0)
+  expect_true(is.finite(result_ridge$se))
+})
+
+
+test_that("estimate() greg with order = 1 gives the same point estimate as linearized (with and without ridge)", {
+  # When order-1 calibration constraints are satisfied, the GREG correction
+  # term (X_target_bar - X_sample_bar) %*% beta is zero, so the greg point
+  # estimate collapses to the Hajek weighted mean -- same as linearized.
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+
+  result_lin  <- estimate(cal, y, data = sample_ind, method = "linearized")
+  result_greg <- estimate(cal, y, data = sample_ind, method = "greg", order = 1)
+
+  expect_equal(result_greg$estimate, result_lin$estimate, tolerance = 1e-6)
+
+  # Same should hold when ridge is used
+  set.seed(1011)
+  result_greg_ridge <- estimate(cal, y, data = sample_ind,
+                                method = "greg", order = 1, use_ridge = TRUE)
+  expect_equal(result_greg_ridge$estimate, result_lin$estimate, tolerance = 1e-6)
+})
+
+
+test_that("estimate() drp method returns correctly structured output", {
+  skip_if_not_installed("xgboost")
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+
+  set.seed(42)
+  result_drp <- estimate(cal, y, data = sample_ind, method = "drp",
+                         nrounds = 50)
+
+  expect_s3_class(result_drp, "data.frame")
+  expect_equal(nrow(result_drp), 1)
+  expect_named(result_drp, c("estimate", "se", "lambda", "method"))
+  expect_true(is.finite(result_drp$estimate))
+  expect_gt(result_drp$se, 0)
+  expect_true(is.finite(result_drp$se))
+  expect_equal(result_drp$method, "drp")
+  expect_equal(result_drp$lambda, cal$lambda[cal$default_lambda_idx])
+})
+
+
+test_that("estimate() drp method is reproducible with set.seed()", {
+  skip_if_not_installed("xgboost")
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+
+  set.seed(123)
+  result1 <- estimate(cal, y, data = sample_ind, method = "drp", nrounds = 50)
+  set.seed(123)
+  result2 <- estimate(cal, y, data = sample_ind, method = "drp", nrounds = 50)
+
+  expect_equal(result1$estimate, result2$estimate)
+  expect_equal(result1$se, result2$se)
+})
