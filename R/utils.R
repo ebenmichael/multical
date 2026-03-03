@@ -52,8 +52,8 @@ get_balance <- function(output, order) {
                                        df$target_count)
         )
       })) %>%
-    unnest(.data$imbalance) %>%
-    select(-.data$data)
+    unnest("imbalance") %>%
+    select(-"data")
 }
 
 

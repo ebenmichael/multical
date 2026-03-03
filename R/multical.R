@@ -20,16 +20,19 @@ NULL
 
 #' Calibrate sample to target via multilevel calibration
 #'
-#' Finds weights that exactly calibrate first order margins between respondents and the target population. Requires individual-level of cell-level data.
+#' Finds weights that exactly calibrate first order margins between respondents
+#' and the target population, operating at the individual level.
 #'
-#' @param formula Formula of the form \code{sample_count ~ covariates}, where 
-#' \code{sample_count} is whether or not an individual responded 
-#' (with individual-level data) or the number of respondents in the cell 
-#' (with cell-level data) and \code{covariates} are the covariates to calibrate 
-#' on
-#' @param target_count Name of column with indicators for whether an individual 
-#' is in the target population (with individual-level data) or the target counts for each cell (with cell-level data)
-#' @param data Dataframe with covariate information, sample and target counts
+#' @param formula Right-hand-side formula of the form \code{~ covariates}
+#' specifying the covariates to calibrate on
+#' @param sample_data Individual-level data frame of respondents. One row per
+#' respondent; each row receives sample weight 1 in the optimization.
+#' @param pop_data Data frame describing the target population. Can be
+#' individual-level (one row per population member) or pre-aggregated to
+#' the cell level. Cells present in \code{pop_data} but absent from
+#' \code{sample_data} are handled automatically.
+#' @param target_count Optional. Name of column in \code{pop_data} giving the
+#' count or weight for each row. Defaults to 1 per row (row-count semantics).
 #' @param order Integer. What order interactions to balance. Default is all orders
 #' @param lambda Numeric. Regularization hyperparamter, by default fits weights 
 #' for a range of values
@@ -43,30 +46,28 @@ NULL
 #' @param verbose Boolean. Show optimization information, default False
 #' @param ... Additional parameters for osqp
 #' 
-#' @return data frame with the weight for each distinct cell, for each value of 
-#' the hyperparameter \code{lambda}. Note: the output data frame may have the 
-#' cells in a different order than in \code{data}. Be sure to join the output 
-#' with \code{data} on the variables to map the weights to the data accurately.
+#' @return Data frame with one row per respondent (from \code{sample_data})
+#' for each value of the hyperparameter \code{lambda}, containing the
+#' calibration weight and the covariate values.
 #'
 #' @export
-multical <- function(formula, target_count, data,
+multical <- function(formula, sample_data, pop_data, target_count = NULL,
                       order = NULL, lambda = NULL,
                       lambda_max = NULL, n_lambda = 20,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
                       verbose = FALSE, ...) {
 
-  # check if data is grouped and ungroup if it is, otherwise weird stuff happens!
-  if(is_grouped_df(data)) {
-    data <- ungroup(data)
-  }
+  # ungroup both inputs if grouped
+  if(is_grouped_df(sample_data)) sample_data <- ungroup(sample_data)
+  if(is_grouped_df(pop_data))    pop_data    <- ungroup(pop_data)
 
-  # create individual units (one row per unit in the data)
+  # build unit-level data frame: respondent rows + pop-only rows
   if(verbose) message("Creating table of unit counts")
-  units <- create_units(formula, enquo(target_count), data)
+  units <- create_units_sep(formula, sample_data, pop_data, enquo(target_count))
   units <- units %>% mutate(.row_id = row_number())
 
-  # column names without .row_id, used for the final pivot
+  # covariate + count column names (excluding .row_id), used for the final pivot
   unit_cols <- units %>% select(-".row_id") %>% names()
 
   # get weights (one per respondent, i.e. per unit with sample_count != 0)
@@ -79,7 +80,9 @@ multical <- function(formula, target_count, data,
   respondent_ids <- units %>% filter(.data$sample_count != 0) %>% pull(.data$.row_id)
   weights <- weights %>% mutate(.row_id = respondent_ids)
 
-  # join weights back to all units and pivot to long format
+  # join weights back to all units (respondents get a weight, pop-only get NA -> 0)
+  # and pivot to long format. Pop-only rows (sample_count = 0) are kept in the
+  # output so that get_balance() can compute correct marginal targets.
   units %>%
     left_join(weights, by = ".row_id") %>%
     select(-".row_id") %>%
@@ -122,6 +125,66 @@ create_units <- function(formula, target_count, data) {
     select(all_of(covs), sample_count, target_count)
 
   return(units)
+}
+
+
+#' Build the combined unit-level data frame from separate sample and population data
+#'
+#' Returns one row per respondent (\code{sample_count = 1},
+#' \code{target_count = pop_count_cell / n_respondents_cell}) followed by one
+#' row per population-only cell (\code{sample_count = 0},
+#' \code{target_count = pop_count_cell}). Population-only rows have no
+#' optimization variables but contribute to the RHS of the marginal constraints.
+#'
+#' @param formula Right-hand-side formula specifying covariates
+#' @param sample_data Individual-level respondent data frame
+#' @param pop_data Population data frame (individual or cell level)
+#' @param target_count Quosure of the target count column in \code{pop_data},
+#' or a null quosure to use row counts
+#'
+#' @keywords internal
+create_units_sep <- function(formula, sample_data, pop_data, target_count) {
+
+  covs <- all.vars(formula)
+
+  # cast covariates to factors in both datasets
+  pop_data    <- pop_data    %>% mutate(across(all_of(covs), as.factor))
+  sample_data <- sample_data %>% mutate(across(all_of(covs), as.factor))
+
+  # aggregate pop_data to one count per cell
+  if(rlang::quo_is_null(target_count)) {
+    pop_agg <- pop_data %>%
+      group_by(across(all_of(covs))) %>%
+      summarise(.pop_count = n(), .groups = "drop")
+  } else {
+    pop_agg <- pop_data %>%
+      group_by(across(all_of(covs))) %>%
+      summarise(.pop_count = sum(!!target_count), .groups = "drop")
+  }
+
+  # count respondents per cell
+  sample_agg <- sample_data %>%
+    group_by(across(all_of(covs))) %>%
+    summarise(.n_respondents = n(), .groups = "drop")
+
+  # respondent rows: sample_count = 1, target_count = pop_count / n_respondents
+  # (cells absent from pop_data get target_count = 0)
+  respondent_units <- sample_data %>%
+    left_join(pop_agg,    by = covs) %>%
+    left_join(sample_agg, by = covs) %>%
+    mutate(sample_count = 1L,
+           target_count = replace_na(.data$.pop_count, 0) / .data$.n_respondents) %>%
+    select(all_of(covs), sample_count, target_count)
+
+  # population-only rows: cells present in pop but absent from sample
+  # sample_count = 0; they contribute to constraint RHS but have no weight variable
+  pop_only <- pop_agg %>%
+    anti_join(sample_agg, by = covs) %>%
+    mutate(sample_count = 0L,
+           target_count = .data$.pop_count) %>%
+    select(all_of(covs), sample_count, target_count)
+
+  bind_rows(respondent_units, pop_only)
 }
 
 

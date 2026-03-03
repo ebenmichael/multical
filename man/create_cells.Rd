@@ -7,16 +7,11 @@
 create_cells(formula, target_count, data)
 }
 \arguments{
-\item{formula}{Formula of the form \code{sample_count ~ covariates}, where
-\code{sample_count} is whether or not an individual responded
-(with individual-level data) or the number of respondents in the cell
-(with cell-level data) and \code{covariates} are the covariates to calibrate
-on}
+\item{formula}{Right-hand-side formula of the form \code{~ covariates}
+specifying the covariates to calibrate on}
 
-\item{target_count}{Name of column with indicators for whether an individual
-is in the target population (with individual-level data) or the target counts for each cell (with cell-level data)}
-
-\item{data}{Dataframe with covariate information, sample and target counts}
+\item{target_count}{Optional. Name of column in \code{pop_data} giving the
+count or weight for each row. Defaults to 1 per row (row-count semantics).}
 }
 \description{
 Create data frame with all distinct cells, and their sample and target counts
