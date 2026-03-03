@@ -80,11 +80,16 @@ Setting `order = 1` calibrates only on the main-effect margins of each covariate
 
 ```{r multical_indiv_rake}
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+out
 ```
 
-The output has one row per respondent **plus** one row per covariate cell that exists in the population but has no respondents (`sample_count = 0`, `weight = 0`). The extra rows are needed for correct balance calculations; filter them out before estimation.
+`multical` returns a `multical` object. The key fields are:
 
-Any auxiliary outcome columns (e.g. `y`) are not carried through by `multical`. Because the respondent rows in the output are in the same order as the rows of `sample_data`, you can retrieve them with `bind_cols` after filtering to respondents.
+- `out$weights`: matrix of calibration weights (one column per lambda value, one row per respondent, in the same order as `sample_data`)
+- `out$cells`: data frame of covariate values plus `sample_count`, `target_count`, and `base_weight` for every unit (respondents and any pop-only cells)
+- `out$lambda`: the lambda values used
+
+Call `weights(out)` to extract respondent weights at the auto-selected default lambda.
 
 We can inspect marginal balance using `get_balance`:
 
@@ -92,12 +97,11 @@ We can inspect marginal balance using `get_balance`:
 get_balance(out, 1)
 ```
 
-To estimate the population average, filter to respondents and take the weighted mean:
+To estimate the population average, extract weights and take the weighted mean:
 
 ```{r estimate_indiv_rake}
-out %>%
-  filter(sample_count != 0) %>%
-  bind_cols(sample_ind %>% select(y)) %>%
+sample_ind %>%
+  mutate(weight = weights(out)) %>%
   summarise(estimate = sum(weight * y) / sum(weight))
 ```
 
@@ -118,10 +122,12 @@ By default (no `lambda` supplied), `multical` solves over a grid of values from 
 ```{r multical_indiv_lambda}
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind)
 
-imbal <- get_balance_v_sample_size(out, 4)
-plot(imbal$n_eff, imbal$imbalance,
-     xlab = "Effective sample size", ylab = "Normalized imbalance")
+# plot() shows the balance vs. effective-sample-size trade-off and
+# highlights the auto-selected default lambda in red
+plot(out)
 ```
+
+By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 90% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific amount of balance gain to target (e.g. `weights(out, balance_gain_target = 0.95)` returns weights that give at least 95% of the total possible balance gain).
 
 For large datasets with many covariates, start with a low `order` and increase as needed — the number of interaction terms grows quickly.
 
@@ -135,11 +141,10 @@ out <- multical(~ X1 + X2 + X3 + X4, sample_ind, data_cell,
                 order = 4, lambda = 1)
 ```
 
-Estimation works the same way — filter to respondents and take the weighted mean:
+Estimation works the same way — extract weights and take the weighted mean:
 
 ```{r multical_cell_estimate}
-out %>%
-  filter(sample_count != 0) %>%
-  bind_cols(sample_ind %>% select(y)) %>%
+sample_ind %>%
+  mutate(weight = weights(out)) %>%
   summarise(estimate = sum(weight * y) / sum(weight))
 ```

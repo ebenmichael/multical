@@ -10,7 +10,7 @@ test_that("Calibration is exact with individual level data", {
                   order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
 
   imbal <- get_balance(cal, 1)$difference /
-    sum(cal$target_count[cal$lambda == cal$lambda[1]])
+    sum(cal$cells$target_count)
   expect_equal(imbal, numeric(length(imbal)))
 })
 
@@ -23,7 +23,7 @@ test_that("Calibration is exact with cell level population data", {
                   order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
 
   imbal <- get_balance(cal, 1)$difference /
-    sum(cal$target_count[cal$lambda == cal$lambda[1]])
+    sum(cal$cells$target_count)
   expect_equal(imbal, numeric(length(imbal)))
 })
 
@@ -37,8 +37,11 @@ test_that("Post stratification is exact for 2nd order with individual level data
   cal <- multical(~ X1 + X2, sample_ind, pop_ind,
                   order = 2, lambda = 0, eps_rel = 1e-10, eps_abs = 1e-10)
 
-  ps_check <- cal %>%
-    filter(.data$sample_count != 0) %>%
+  cal_resp <- cal$cells %>%
+    filter(sample_count != 0) %>%
+    mutate(weight = weights(cal))
+
+  ps_check <- cal_resp %>%
     group_by(X1, X2) %>%
     summarise(
       # within-cell weight SD should be ~0; coalesce for single-respondent cells
@@ -51,7 +54,7 @@ test_that("Post stratification is exact for 2nd order with individual level data
   expect_equal(ps_check$mean_weight, ps_check$ps_weight,     tolerance = 1e-4)
 
   imbal <- get_balance(cal, 2)$difference /
-    sum(cal$target_count[cal$lambda == cal$lambda[1]])
+    sum(cal$cells$target_count)
   expect_equal(imbal, numeric(length(imbal)), tolerance = 1e-4)
 })
 
@@ -74,8 +77,11 @@ test_that("Post stratification is exact for 2nd order with cell level population
     group_by(X1, X2) %>%
     summarise(n_resp = n(), .groups = "drop")
 
-  ps_check <- cal %>%
-    filter(.data$sample_count != 0) %>%
+  cal_resp <- cal$cells %>%
+    filter(sample_count != 0) %>%
+    mutate(weight = weights(cal))
+
+  ps_check <- cal_resp %>%
     group_by(X1, X2) %>%
     summarise(
       weight_sd   = coalesce(sd(.data$weight), 0),
@@ -90,8 +96,35 @@ test_that("Post stratification is exact for 2nd order with cell level population
   expect_equal(ps_check$mean_weight, ps_check$ps_weight,     tolerance = 1e-4)
 
   imbal <- get_balance(cal, 2)$difference /
-    sum(cal$target_count[cal$lambda == cal$lambda[1]])
+    sum(cal$cells$target_count)
   expect_equal(imbal, numeric(length(imbal)), tolerance = 1e-4)
+})
+
+
+test_that("Individual-level and cell-level population data give the same weights", {
+
+  # data_cell is the full 4-way aggregation of data_individual, so the two
+  # population representations are equivalent and must yield identical weights.
+
+  # order = 1 (raking): lambda is internally set to 0, fully determined
+  cal_ind  <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                       order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+  cal_cell <- multical(~ X1 + X2 + X3 + X4, sample_ind, data_cell,
+                       target_count = target_count,
+                       order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+
+  expect_equal(weights(cal_ind), weights(cal_cell), tolerance = 1e-6)
+
+  # order = 4, fixed lambda: higher-order post-stratification
+  cal_ind4  <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                        order = 4, lambda = 1,
+                        eps_rel = 1e-10, eps_abs = 1e-10)
+  cal_cell4 <- multical(~ X1 + X2 + X3 + X4, sample_ind, data_cell,
+                        target_count = target_count,
+                        order = 4, lambda = 1,
+                        eps_rel = 1e-10, eps_abs = 1e-10)
+
+  expect_equal(weights(cal_ind4), weights(cal_cell4), tolerance = 1e-6)
 })
 
 
@@ -106,9 +139,7 @@ test_that("Large lambda with base weights converges to base weights", {
   cal0 <- multical(~ X1 + X2, sample_ind, pop_ind,
                    order = 2, lambda = 1e-8)
 
-  base_wts <- cal0 %>%
-    filter(sample_count != 0) %>%
-    pull(weight)
+  base_wts <- weights(cal0)
 
   sample_ind_bw <- sample_ind %>% mutate(base_wt = base_wts)
 
@@ -117,9 +148,7 @@ test_that("Large lambda with base weights converges to base weights", {
                   order = 2, lambda = 1e6,
                   eps_rel = 1e-10, eps_abs = 1e-10)
 
-  respondent_weights <- cal %>%
-    filter(sample_count != 0) %>%
-    pull(weight)
+  respondent_weights <- weights(cal)
 
   expect_equal(respondent_weights, base_wts, tolerance = 1e-2)
 })
@@ -140,9 +169,58 @@ test_that("Base weights work correctly when pop-only cells exist", {
                     eps_rel = 1e-10, eps_abs = 1e-10)
   )
 
-  respondent_weights <- cal %>%
-    filter(sample_count != 0) %>%
-    pull(weight)
+  respondent_weights <- weights(cal)
 
   expect_true(all(is.finite(respondent_weights)))
+})
+
+
+test_that("multical runs without error when lambda is NULL", {
+
+  # Default behaviour: fit over a grid of lambda values
+  expect_no_error(
+    cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                    order = 4, eps_rel = 1e-8, eps_abs = 1e-8)
+  )
+
+  # Should return a multical object with multiple lambdas and a weight matrix
+  expect_s3_class(cal, "multical")
+  expect_gt(length(cal$lambda), 1L)
+  expect_equal(nrow(cal$weights), nrow(sample_ind))
+  expect_equal(ncol(cal$weights), length(cal$lambda))
+
+  # weights() should return a vector of length equal to n_respondents
+  w <- weights(cal)
+  expect_length(w, nrow(sample_ind))
+  expect_true(all(is.finite(w)))
+})
+
+
+test_that("weights() returns weights at the correct default lambda", {
+
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 4, eps_rel = 1e-8, eps_abs = 1e-8)
+
+  idx <- cal$default_lambda_idx
+
+  # weights() must exactly match the column of the weight matrix at default_lambda_idx
+  expect_equal(weights(cal), cal$weights[, idx])
+
+  # default_lambda_idx must reproduce what select_default_lambda returns when
+  # called directly with the same inputs
+  expect_equal(
+    idx,
+    multical:::select_default_lambda(
+      cal$weights, cal$cells, cal$lambda, cal$order, cal$balance_threshold
+    )
+  )
+
+  # The default lambda should not be the worst-balance one (index 1, largest lambda),
+  # since it should achieve at least balance_threshold of the possible gain
+  expect_gt(idx, 1L)
+
+  # Weights should be positive and finite
+  w <- weights(cal)
+  expect_true(all(w >= 0))
+  expect_true(all(is.finite(w)))
 })

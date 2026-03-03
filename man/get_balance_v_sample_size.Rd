@@ -4,12 +4,14 @@
 \alias{get_balance_v_sample_size}
 \title{Compute the overall level of balance versus the effective sample size}
 \usage{
-get_balance_v_sample_size(output, order)
+get_balance_v_sample_size(x, order, ...)
 }
 \arguments{
-\item{output}{Output of \code{\link{multical}}}
+\item{x}{A \code{\link{multical}} object}
 
 \item{order}{Integer. Order of interactions to include in the balance measure}
+
+\item{...}{Additional arguments (unused)}
 }
 \value{
 A data frame with the imbalance and effective sample size for each
@@ -18,5 +20,5 @@ value of the hyper-parameter
 \description{
 For each value of the hyper-parameter, computes the effective sample size
 and the overall root sum of squared differences in all interactions,
-normalized by the size of the target population
+normalized by the size of the target population.
 }

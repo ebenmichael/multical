@@ -64,9 +64,22 @@ regularization penalty becomes
 \item{...}{Additional parameters for osqp}
 }
 \value{
-Data frame with one row per respondent (from \code{sample_data})
-for each value of the hyperparameter \code{lambda}, containing the
-calibration weight and the covariate values.
+A \code{multical} object with the following fields:
+\itemize{
+\item \code{weights}: numeric matrix (n_respondents x n_lambdas) of
+calibration weights, column names are lambda values
+\item \code{lambda}: numeric vector of lambda values
+\item \code{cells}: data frame with covariate columns plus
+\code{sample_count}, \code{target_count}, and \code{base_weight};
+includes pop-only rows (\code{sample_count = 0})
+\item \code{formula}: the formula passed to \code{multical}
+\item \code{order}: resolved order of interactions used
+\item \code{n_respondents}: number of respondents
+\item \code{default_lambda_idx}: index of the auto-selected best lambda
+\item \code{balance_threshold}: threshold used for lambda selection
+}
+Use \code{\link{weights}} to extract respondent weights at the default
+lambda, and \code{\link{get_balance}} to assess calibration quality.
 }
 \description{
 Finds weights that exactly calibrate first order margins between respondents

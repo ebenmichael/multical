@@ -13,6 +13,7 @@
 #' @importFrom stats terms
 #' @importFrom stats formula
 #' @importFrom stats as.formula
+#' @importFrom stats weights
 #' @importFrom rlang .data
 NULL
 
@@ -51,9 +52,22 @@ NULL
 #' @param verbose Boolean. Show optimization information, default False
 #' @param ... Additional parameters for osqp
 #' 
-#' @return Data frame with one row per respondent (from \code{sample_data})
-#' for each value of the hyperparameter \code{lambda}, containing the
-#' calibration weight and the covariate values.
+#' @return A \code{multical} object with the following fields:
+#' \itemize{
+#'   \item \code{weights}: numeric matrix (n_respondents x n_lambdas) of
+#'     calibration weights, column names are lambda values
+#'   \item \code{lambda}: numeric vector of lambda values
+#'   \item \code{cells}: data frame with covariate columns plus
+#'     \code{sample_count}, \code{target_count}, and \code{base_weight};
+#'     includes pop-only rows (\code{sample_count = 0})
+#'   \item \code{formula}: the formula passed to \code{multical}
+#'   \item \code{order}: resolved order of interactions used
+#'   \item \code{n_respondents}: number of respondents
+#'   \item \code{default_lambda_idx}: index of the auto-selected best lambda
+#'   \item \code{balance_threshold}: threshold used for lambda selection
+#' }
+#' Use \code{\link{weights}} to extract respondent weights at the default
+#' lambda, and \code{\link{get_balance}} to assess calibration quality.
 #'
 #' @export
 multical <- function(formula, sample_data, pop_data, target_count = NULL,
@@ -92,8 +106,8 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
   units <- units %>%
     mutate(base_weight = c(bw_vec, rep(NA_real_, n_pop_only)))
 
-  # covariate + count column names (excluding .row_id), used for the final pivot
-  unit_cols <- units %>% select(-".row_id") %>% names()
+  # resolve order now so it can be stored in the multical object
+  if (is.null(order)) order <- length(all.vars(formula))
 
   # get weights (one per respondent, i.e. per unit with sample_count != 0)
   weights <- calibrate_(units %>% select(-c("sample_count", "target_count",
@@ -102,20 +116,52 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
                         lowlim, uplim, bw_vec_full, verbose, ...)
 
-  # tag weights with the row IDs of respondents for joining back
-  respondent_ids <- units %>% filter(.data$sample_count != 0) %>% pull(.data$.row_id)
-  weights <- weights %>% mutate(.row_id = respondent_ids)
+  # extract the weights matrix (respondents only, rows in sample_data order)
+  weights_matrix <- as.matrix(weights)
+  lam_vec <- as.numeric(colnames(weights_matrix))
 
-  # join weights back to all units (respondents get a weight, pop-only get NA -> 0)
-  # and pivot to long format. Pop-only rows (sample_count = 0) are kept in the
-  # output so that get_balance() can compute correct marginal targets.
-  units %>%
-    left_join(weights, by = ".row_id") %>%
-    select(-".row_id") %>%
-    pivot_longer(!all_of(unit_cols), names_to = "lambda", values_to = "weight") %>%
-    mutate(weight = replace_na(.data$weight, 0),
-           lambda = as.numeric(.data$lambda)) %>%
-    return()
+  # cells = units without the internal row-id helper column;
+  # pop-only rows (sample_count = 0) are retained so that get_balance() can
+  # compute correct marginal targets.
+  cells <- units %>% select(-".row_id")
+
+  new_multical(weights_matrix, lam_vec, cells, formula, order)
+}
+
+
+#' Construct a multical object
+#'
+#' @param weights_matrix Numeric matrix (n_respondents x n_lambdas) of
+#'   calibration weights. Column names are the lambda values.
+#' @param lambda Numeric vector of lambda values.
+#' @param cells Data frame with covariate columns, \code{sample_count},
+#'   \code{target_count}, and \code{base_weight}. One row per respondent
+#'   followed by one row per pop-only cell.
+#' @param formula The formula passed to \code{\link{multical}}.
+#' @param order Integer. Resolved order of interactions used in the calibration.
+#' @param balance_threshold Numeric in (0, 1). Fraction of the total possible
+#'   balance gain required to qualify a lambda for selection. Default 0.9.
+#'
+#' @keywords internal
+new_multical <- function(weights_matrix, lambda, cells, formula, order,
+                         balance_threshold = 0.9) {
+  n_respondents <- sum(cells$sample_count != 0)
+  default_lambda_idx <- select_default_lambda(
+    weights_matrix, cells, lambda, order, balance_threshold
+  )
+  structure(
+    list(
+      weights            = weights_matrix,
+      lambda             = lambda,
+      cells              = cells,
+      formula            = formula,
+      order              = order,
+      n_respondents      = n_respondents,
+      default_lambda_idx = default_lambda_idx,
+      balance_threshold  = balance_threshold
+    ),
+    class = "multical"
+  )
 }
 
 
@@ -293,12 +339,12 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
       sol_lam <- solver$Solve()
       x <- sol_lam$x
       y <- sol_lam$y
-      solution[, i] <- x
+      solution[, i] <- pmin(pmax(lowlim, x), uplim)
     }
     solution <- as.data.frame(solution)
     names(solution) <- lam_seq
   } else {
-    solution <- data.frame(solver$Solve()$x)
+    solution <- data.frame(pmin(pmax(lowlim, solver$Solve()$x), uplim))
     names(solution) <- lambda
   }
   return(solution)
