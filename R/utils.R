@@ -28,14 +28,18 @@ compute_balance <- function(D, weights, sample_counts, target_counts) {
 #' @export
 get_balance <- function(output, order) {
 
-  # get distinct cells
-  cells <- output %>%
-    select(-c("sample_count", "target_count", "lambda", "weight")) %>%
-    distinct()
-  
-  D <- Matrix::sparse.model.matrix(~ . - 1, cells)
+  meta_cols <- c("sample_count", "target_count", "lambda", "weight")
+  cov_cols <- setdiff(colnames(output), meta_cols)
+
+  # build the design matrix from one lambda's unit data
+  # (covariate structure is the same across all lambda values)
+  unit_covs <- output %>%
+    filter(.data$lambda == first(.data$lambda)) %>%
+    select(all_of(cov_cols))
+
+  D <- Matrix::sparse.model.matrix(~ . - 1, unit_covs)
   if(order > 1) {
-    D <- cbind(D, create_design_matrix(cells, order))
+    D <- cbind(D, create_design_matrix(unit_covs, order))
   }
 
   output %>%
@@ -68,7 +72,10 @@ get_balance <- function(output, order) {
 
 get_balance_v_sample_size <- function(output, order) {
 
-  target_pop <- sum(output$target_count)
+  target_pop <- output %>%
+    filter(.data$lambda == first(.data$lambda)) %>%
+    pull(.data$target_count) %>%
+    sum()
   # get imbalances
   imbals <- get_balance(output, order) %>%
     group_by(.data$lambda) %>%

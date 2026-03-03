@@ -61,23 +61,29 @@ multical <- function(formula, target_count, data,
     data <- ungroup(data)
   }
 
-  # create distinct cells for all interactions
-  if(verbose) message("Creating table of cell counts")
-  cells <- create_cells(formula, enquo(target_count), data)
+  # create individual units (one row per unit in the data)
+  if(verbose) message("Creating table of unit counts")
+  units <- create_units(formula, enquo(target_count), data)
+  units <- units %>% mutate(.row_id = row_number())
 
-  # get weights
-  weights <- calibrate_(cells %>% select(-c("sample_count", "target_count")),
-                        cells$sample_count, cells$target_count,
+  # column names without .row_id, used for the final pivot
+  unit_cols <- units %>% select(-".row_id") %>% names()
+
+  # get weights (one per respondent, i.e. per unit with sample_count != 0)
+  weights <- calibrate_(units %>% select(-c("sample_count", "target_count", ".row_id")),
+                        units$sample_count, units$target_count,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
                         lowlim, uplim, verbose, ...)
-  # combine back in and return
-  cells %>% filter(.data$sample_count != 0) %>%
-    bind_cols(weights) %>%
-    select(-c("sample_count", "target_count")) %>%
-    right_join(cells,
-               by = cells %>% select(-c("sample_count", "target_count")) %>%
-                    names()) %>%
-    pivot_longer(!names(cells), names_to = "lambda", values_to = "weight") %>%
+
+  # tag weights with the row IDs of respondents for joining back
+  respondent_ids <- units %>% filter(.data$sample_count != 0) %>% pull(.data$.row_id)
+  weights <- weights %>% mutate(.row_id = respondent_ids)
+
+  # join weights back to all units and pivot to long format
+  units %>%
+    left_join(weights, by = ".row_id") %>%
+    select(-".row_id") %>%
+    pivot_longer(!all_of(unit_cols), names_to = "lambda", values_to = "weight") %>%
     mutate(weight = replace_na(.data$weight, 0),
            lambda = as.numeric(.data$lambda)) %>%
     return()
@@ -99,6 +105,23 @@ create_cells <- function(formula, target_count, data) {
     ungroup()
 
   return(cells)
+}
+
+
+#' Create data frame with one row per unit (no aggregation), with sample and target indicators
+#' @inheritParams multical
+#'
+#' @keywords internal
+create_units <- function(formula, target_count, data) {
+  covs <- all.vars(terms(Formula::Formula(formula), rhs = 1)[[3]])
+  sample_count <- terms(Formula::Formula(formula), rhs = 1)[[2]]
+  units <- data %>%
+    mutate(across(all_of(covs), as.factor),
+           sample_count = !!sample_count,
+           target_count = !!target_count) %>%
+    select(all_of(covs), sample_count, target_count)
+
+  return(units)
 }
 
 
