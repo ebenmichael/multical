@@ -105,9 +105,14 @@ Setting `order = 1` calibrates only on the main-effect margins of each covariate
 
 ```r
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
-#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
 out
-#> Error in eval(expr, envir, enclos): object 'out' not found
+#> A multical object
+#> Formula : ~X1 + X2 + X3 + X4
+#> Order   : 1 
+#> Respondents : 500 
+#> Lambda values: 1 
+#> Lambda : 0 
+#> Use weights() to extract respondent weights, get_balance() to assess calibration.
 ```
 
 `multical` returns a `multical` object. The key fields are:
@@ -123,7 +128,17 @@ We can inspect marginal balance using `get_balance`:
 
 ```r
 get_balance(out, 1)
-#> Error in eval(expr, envir, enclos): object 'out' not found
+#>    lambda term   difference
+#> 1       0  X11 5.989277e-05
+#> 2       0  X12 4.731923e-05
+#> 3       0  X13 2.252074e-05
+#> 4       0  X22 5.984805e-05
+#> 5       0  X23 9.856925e-06
+#> 6       0  X24 1.242060e-05
+#> 7       0  X32 6.077409e-05
+#> 8       0  X42 8.370378e-06
+#> 9       0  X43 9.729019e-06
+#> 10      0  X44 9.917186e-05
 ```
 
 To estimate the population mean of an outcome, use the `estimate()` function
@@ -132,7 +147,8 @@ To estimate the population mean of an outcome, use the `estimate()` function
 
 ```r
 estimate(out, y, data = sample_ind)
-#> Error in estimate(out, y, data = sample_ind): could not find function "estimate"
+#>   estimate         se lambda     method
+#> 1 0.539679 0.02291384      0 linearized
 ```
 
 ### Higher-order calibration with a fixed lambda
@@ -142,10 +158,21 @@ Setting `order > 1` includes interaction terms up to that order. The parameter `
 
 ```r
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4, lambda = 1)
-#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
 
 rbind(head(get_balance(out, 4)), tail(get_balance(out, 4)))
-#> Error in eval(expr, envir, enclos): object 'out' not found
+#>     lambda            term    difference
+#> 1        1             X11 -1.709178e-07
+#> 2        1             X12  3.146617e-07
+#> 3        1             X13  1.247188e-07
+#> 4        1             X22 -4.474253e-07
+#> 5        1             X23  2.841223e-07
+#> 6        1             X24 -4.281146e-07
+#> 104      1 X12:X22:X32:X44 -5.394362e-01
+#> 105      1 X13:X22:X32:X44 -1.663485e+00
+#> 106      1 X12:X23:X32:X44  2.994214e+00
+#> 107      1 X13:X23:X32:X44  1.438081e+00
+#> 108      1 X12:X24:X32:X44 -3.621160e+00
+#> 109      1 X13:X24:X32:X44  1.282460e+00
 ```
 
 ### Selecting lambda automatically
@@ -155,13 +182,13 @@ By default (no `lambda` supplied), `multical` solves over a grid of values from 
 
 ```r
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind)
-#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
 
 # plot() shows the balance vs. effective-sample-size trade-off and
 # highlights the auto-selected default lambda in red
 plot(out)
-#> Error in eval(expr, envir, enclos): object 'out' not found
 ```
+
+![plot of chunk multical_indiv_lambda](figure/multical_indiv_lambda-1.png)
 
 By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 90% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific amount of balance gain to target (e.g. `weights(out, balance_gain_target = 0.95)` returns weights that give at least 95% of the total possible balance gain).
 
@@ -176,7 +203,6 @@ If the population is available as a pre-aggregated cell table (e.g. from a censu
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, data_cell,
                 target_count = target_count,
                 order = 4, lambda = 1)
-#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
 ```
 
 Estimation works the same way (using the default linearized estimator):
@@ -184,7 +210,8 @@ Estimation works the same way (using the default linearized estimator):
 
 ```r
 estimate(out, y, data = sample_ind)
-#> Error in estimate(out, y, data = sample_ind): could not find function "estimate"
+#>    estimate         se lambda     method
+#> 1 0.5313944 0.02378001      1 linearized
 ```
 
 
@@ -207,7 +234,6 @@ and `method`.
 
 ```r
 out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4)
-#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
 ```
 
 ### Linearized estimator (default)
@@ -219,7 +245,8 @@ The `order` argument sets the interaction order in the regression (defaults to 1
 
 ```r
 estimate(out, y, data = sample_ind)
-#> Error in estimate(out, y, data = sample_ind): could not find function "estimate"
+#>   estimate         se  lambda     method
+#> 1 0.533156 0.02352398 4.79876 linearized
 ```
 
 You can set the interaction order explicitly:
@@ -227,7 +254,8 @@ You can set the interaction order explicitly:
 
 ```r
 estimate(out, y, data = sample_ind, method = "linearized", order = 2)
-#> Error in estimate(out, y, data = sample_ind, method = "linearized", order = 2): could not find function "estimate"
+#>   estimate         se  lambda     method
+#> 1 0.533156 0.02280711 4.79876 linearized
 ```
 
 Pass `use_ridge = TRUE` to fit the outcome model with ridge regression instead
@@ -237,7 +265,8 @@ Pass `use_ridge = TRUE` to fit the outcome model with ridge regression instead
 ```r
 estimate(out, y, data = sample_ind, method = "linearized", order = 2,
          use_ridge = TRUE)
-#> Error in estimate(out, y, data = sample_ind, method = "linearized", order = 2, : could not find function "estimate"
+#>   estimate         se  lambda     method
+#> 1 0.533156 0.02365524 4.79876 linearized
 ```
 
 ### Hajek estimator
@@ -248,7 +277,8 @@ without any regression adjustment.
 
 ```r
 estimate(out, y, data = sample_ind, method = "hajek")
-#> Error in estimate(out, y, data = sample_ind, method = "hajek"): could not find function "estimate"
+#>   estimate         se  lambda method
+#> 1 0.533156 0.02367092 4.79876  hajek
 ```
 
 ### GREG estimator
@@ -260,7 +290,8 @@ the point estimate. The `order` and `use_ridge` arguments work the same way as f
 
 ```r
 estimate(out, y, data = sample_ind, method = "greg", order = 2)
-#> Error in estimate(out, y, data = sample_ind, method = "greg", order = 2): could not find function "estimate"
+#>   estimate         se  lambda method
+#> 1 0.534722 0.02280711 4.79876   greg
 ```
 
 ### DRP estimator
@@ -272,7 +303,8 @@ with cross-fitted gradient-boosted trees (xgboost). Additional arguments
 
 ```r
 estimate(out, y, data = sample_ind, method = "drp", nrounds = 200)
-#> Error in estimate(out, y, data = sample_ind, method = "drp", nrounds = 200): could not find function "estimate"
+#>    estimate         se  lambda method
+#> 1 0.5283282 0.02611627 4.79876    drp
 ```
 
 ### Selecting lambda
@@ -286,9 +318,11 @@ value in (0, 1) that re-runs lambda selection):
 ```r
 # use the weights at index 5 in the lambda grid
 estimate(out, y, data = sample_ind, lambda_idx = 5)
-#> Error in estimate(out, y, data = sample_ind, lambda_idx = 5): could not find function "estimate"
+#>    estimate         se   lambda     method
+#> 1 0.5375823 0.02296298 182.0021 linearized
 
 # re-select lambda targeting 95% balance gain
 estimate(out, y, data = sample_ind, balance_threshold = 0.95)
-#> Error in estimate(out, y, data = sample_ind, balance_threshold = 0.95): could not find function "estimate"
+#>    estimate        se   lambda     method
+#> 1 0.5324562 0.0236437 1.428279 linearized
 ```
