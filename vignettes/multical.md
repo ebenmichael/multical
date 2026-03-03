@@ -17,15 +17,22 @@ You can install `multical` from github using `devtools`.
 
 
 ```r
-## Install devtools if noy already installed
+## Install devtools if not already installed
 install.packages("devtools", repos='http://cran.us.r-project.org')
-## Install augsynth from github
+## Install multical from github
 devtools::install_github("ebenmichael/multical")
 ```
 
 
 ## Data
-To show how to use `multical`, we'll use two contrived data examples. One, `data_individual`, has individual-level information on covariates, response, and outcome, while the other, `data_cell`, has cell-level information.
+
+`multical` takes two separate data frames as inputs:
+
+- **`sample_data`**: individual-level data for survey respondents. One row per respondent.
+- **`pop_data`**: data describing the target population. This can be individual-level (one row per population member) or pre-aggregated to the cell level (one row per unique combination of covariate values, with a column giving the count per cell).
+
+We'll use two contrived examples shipped with the package: `data_individual` has individual-level information on covariates, response, and outcome; `data_cell` has cell-level information.
+
 
 ```r
 library(multical)
@@ -42,7 +49,7 @@ data(data_individual)
 data(data_cell)
 ```
 
-Each data set has the same 4 covariates, but `data_individual` records whether each individual responded `response` to the survey, and how they answered a binary question `y`.
+`data_individual` records 4 covariates, whether each individual responded (`response`) to the survey, whether they are in the target population (`intarget`), and their answer to a binary question `y`.
 
 
 ```r
@@ -56,13 +63,12 @@ head(data_individual)
 #> 6  1  1  1  1        1        1 1
 ```
 
-On the other hand, `data_cell` records each individual combination of the covariates, the number of respondents in that cell, the number of individuals in the target population in that cell, and the mean outcome in the cell.
+`data_cell` records each unique combination of the 4 covariates, the number of respondents in that cell (`sample_count`), the number of individuals in the target population in that cell (`target_count`), and the mean outcome in the cell.
 
 
 ```r
-
 head(data_cell)
-#> # A tibble: 6 x 7
+#> # A tibble: 6 × 7
 #>   X1    X2    X3    X4    sample_count target_count     y
 #>   <fct> <fct> <fct> <fct>        <dbl>        <dbl> <dbl>
 #> 1 1     1     1     1                8           50 0.42 
@@ -73,96 +79,216 @@ head(data_cell)
 #> 6 1     1     2     2                9           23 0.565
 ```
 
+For the examples below we'll split `data_individual` into respondents (our sample) and the full population.
+
+
+```r
+sample_ind <- data_individual %>% filter(response == 1)
+pop_ind    <- data_individual   # all rows; each counts as 1 population member
+```
+
 
 ## Getting multilevel calibration weights
 
-To compute the multilevel calibration weights for both cases, we use the `multical` function. For individual-level data, we give a formula `response ~ covariates`, and an indicator for whether an individual is in the target population (in this case everyone is). We also tell `multical` what order of interactions to consider,.
-For instance, if we only want to rake on the first order margins, we set `order = 1`.
+The main function is `multical`. Its first three arguments are:
+
+1. `formula`: a **right-hand-side only** formula (`~ covariates`) specifying which variables to calibrate on
+2. `sample_data`: the respondent data frame
+3. `pop_data`: the population data frame (individual or cell level)
+
+An optional `target_count` argument names a column in `pop_data` giving the count or weight per row. When omitted, each row of `pop_data` is treated as one population member.
+
+### Raking on first-order margins (individual-level population)
+
+Setting `order = 1` calibrates only on the main-effect margins of each covariate.
 
 
 ```r
-out <- multical(response ~ X1 + X2 + X3 + X4, intarget, data_individual, order = 1)
+out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
+#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
+out
+#> Error in eval(expr, envir, enclos): object 'out' not found
 ```
 
-We can see the difference between the re-weighted sample and the population via the `get_imbalance` function:
+`multical` returns a `multical` object. The key fields are:
+
+- `out$weights`: matrix of calibration weights (one column per lambda value, one row per respondent, in the same order as `sample_data`)
+- `out$cells`: data frame of covariate values plus `sample_count`, `target_count`, and `base_weight` for every unit (respondents and any pop-only cells)
+- `out$lambda`: the lambda values used
+
+Call `weights(out)` to extract respondent weights at the auto-selected default lambda.
+
+We can inspect marginal balance using `get_balance`:
+
 
 ```r
 get_balance(out, 1)
-#> # A tibble: 10 x 3
-#>    lambda term   difference
-#>     <dbl> <chr>       <dbl>
-#>  1      0 X11   0.00000188 
-#>  2      0 X12   0.00000152 
-#>  3      0 X13   0.000000781
-#>  4      0 X22   0.00000190 
-#>  5      0 X23   0.000000392
-#>  6      0 X24   0.000000411
-#>  7      0 X32   0.00000210 
-#>  8      0 X42   0.000000281
-#>  9      0 X43   0.000000306
-#> 10      0 X44   0.00000312
+#> Error in eval(expr, envir, enclos): object 'out' not found
 ```
 
-To estimate the population average with individual level data, we can join the output with our data and take the weighted average
+To estimate the population mean of an outcome, use the `estimate()` function
+(defaults to the linearized estimator — see the [Estimating population means](#estimating-population-means-with-estimate) section below for all options):
+
 
 ```r
-inner_join(data_individual, out) %>%
-  filter(response == 1) %>%
-  summarise(sum(weight * y) / sum(weight))
-#> Joining, by = c("X1", "X2", "X3", "X4")
-#>   sum(weight * y)/sum(weight)
-#> 1                   0.5422783
+estimate(out, y, data = sample_ind)
+#> Error in estimate(out, y, data = sample_ind): could not find function "estimate"
 ```
 
-If we want to include higher order interaction terms, we can increase `order` and give a hyper-parameter `lambda` that controls the degree of approximate post-stratification.
+### Higher-order calibration with a fixed lambda
+
+Setting `order > 1` includes interaction terms up to that order. The parameter `lambda` controls the trade-off between exact post-stratification (small `lambda`) and lower variance (large `lambda`).
+
 
 ```r
-out <- multical(response ~ X1 + X2 + X3 + X4, intarget, data_individual, order = 4, lambda = 1)
+out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4, lambda = 1)
+#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
 
 rbind(head(get_balance(out, 4)), tail(get_balance(out, 4)))
-#> # A tibble: 12 x 3
-#>    lambda term             difference
-#>     <dbl> <chr>                 <dbl>
-#>  1      1 X11              0.0000546 
-#>  2      1 X12              0.0000458 
-#>  3      1 X13              0.0000242 
-#>  4      1 X22              0.0000562 
-#>  5      1 X23              0.00000688
-#>  6      1 X24              0.0000145 
-#>  7      1 X12:X22:X32:X44 -0.178     
-#>  8      1 X13:X22:X32:X44 -2.36      
-#>  9      1 X12:X23:X32:X44  4.34      
-#> 10      1 X13:X23:X32:X44  1.84      
-#> 11      1 X12:X24:X32:X44 -6.79      
-#> 12      1 X13:X24:X32:X44  1.45
+#> Error in eval(expr, envir, enclos): object 'out' not found
 ```
 
-By default, `multical` uses all higher order interactions. For large datasets this may be prohibitively computational expensive! So consider starting with a low order and increasing for large datasets. If no value of `lambda` is provided, `multical` solves for a series of different hyper-parameter values. We can use the `get_balance_v_sample_size` function to trace out the trade-off between better balance and lower effective sample sizes.
+### Selecting lambda automatically
 
-```r
-out <- multical(response ~ X1 + X2 + X3 + X4, intarget, data_individual)
-
-imbal <- get_balance_v_sample_size(out, 4)
-plot(imbal$n_eff, imbal$imbalance)
-```
-
-![plot of chunk multical_indiv_lambda](figure/multical_indiv_lambda-1.png)
-
-
-For cell-level data, almost everything is the same. However, now we use the sample and population counts rather than indicators for response and being in the target population.
-
-```r
-out <- multical(sample_count ~ X1 + X2 + X3 + X4, target_count, data_cell, order = 4, lambda = 1)
-```
-Note: the output data frame `out` may have the cells in a different order than in the input data frame. Be sure to join the output  with the original data frame on the variables to map the weights to the data accurately. We can then estimate the population average with the weights and sample counts.
+By default (no `lambda` supplied), `multical` solves over a grid of values from `lambda_max` down to `lambda_max * lambda_min_ratio`. Use `get_balance_v_sample_size` to trace the balance-effective-sample-size trade-off and choose an appropriate value.
 
 
 ```r
-left_join(data_cell, out) %>%
-  summarise(sum(weight * sample_count * y) / sum(target_count))
-#> Joining, by = c("X1", "X2", "X3", "X4", "sample_count", "target_count")
-#> # A tibble: 1 x 1
-#>   `sum(weight * sample_count * y)/sum(target_count)`
-#>                                                <dbl>
-#> 1                                              0.515
+out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind)
+#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
+
+# plot() shows the balance vs. effective-sample-size trade-off and
+# highlights the auto-selected default lambda in red
+plot(out)
+#> Error in eval(expr, envir, enclos): object 'out' not found
+```
+
+By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 90% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific amount of balance gain to target (e.g. `weights(out, balance_gain_target = 0.95)` returns weights that give at least 95% of the total possible balance gain).
+
+For large datasets with many covariates, start with a low `order` and increase as needed — the number of interaction terms grows quickly.
+
+### Using pre-aggregated cell-level population data
+
+If the population is available as a pre-aggregated cell table (e.g. from a census), pass it as `pop_data` and name the count column via `target_count`. The sample is still individual-level.
+
+
+```r
+out <- multical(~ X1 + X2 + X3 + X4, sample_ind, data_cell,
+                target_count = target_count,
+                order = 4, lambda = 1)
+#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
+```
+
+Estimation works the same way (using the default linearized estimator):
+
+
+```r
+estimate(out, y, data = sample_ind)
+#> Error in estimate(out, y, data = sample_ind): could not find function "estimate"
+```
+
+
+## Estimating population means with `estimate()`
+
+The `estimate()` function computes a population mean estimate and a
+linearization-based standard error from a fitted `multical` object. The
+`method` argument selects the estimator:
+
+| Method | Description |
+|--------|-------------|
+| `"linearized"` (default) | Point estimate is the weighted mean. Standard errors are the residuals of an OLS or ridge regression of the outcome on interactions up to the specified order. |
+| `"hajek"` | Point estimate is the weighted mean. Standard error is the standard sandwich standard error.|
+| `"greg"` | GREG estimator; uses OLS/ridge regression for model assistance to reduce bias. Standard errors are based off the residuals of the regression |
+| `"drp"` | Double regression and post-stratification; the same implementation as `"greg"` but uses cross-fitted gradient-boosted trees (xgboost) for the outcome model. |
+
+All methods return a one-row data frame with columns `estimate`, `se`, `lambda`,
+and `method`.
+
+
+```r
+out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4)
+#> Error in terms(Formula::Formula(formula), rhs = 1)[[3]]: subscript out of bounds
+```
+
+### Linearized estimator (default)
+
+The default. Fits an OLS model of `y` on the covariate design matrix and uses
+the residuals in the SE formula.
+The `order` argument sets the interaction order in the regression (defaults to 1).
+
+
+```r
+estimate(out, y, data = sample_ind)
+#> Error in estimate(out, y, data = sample_ind): could not find function "estimate"
+```
+
+You can set the interaction order explicitly:
+
+
+```r
+estimate(out, y, data = sample_ind, method = "linearized", order = 2)
+#> Error in estimate(out, y, data = sample_ind, method = "linearized", order = 2): could not find function "estimate"
+```
+
+Pass `use_ridge = TRUE` to fit the outcome model with ridge regression instead
+(penalty chosen by 10-fold cross-validation via `glmnet`):
+
+
+```r
+estimate(out, y, data = sample_ind, method = "linearized", order = 2,
+         use_ridge = TRUE)
+#> Error in estimate(out, y, data = sample_ind, method = "linearized", order = 2, : could not find function "estimate"
+```
+
+### Hajek estimator
+
+Returns the calibration-weighted mean of `y` and a  standard sandwich SE,
+without any regression adjustment.
+
+
+```r
+estimate(out, y, data = sample_ind, method = "hajek")
+#> Error in estimate(out, y, data = sample_ind, method = "hajek"): could not find function "estimate"
+```
+
+### GREG estimator
+
+The GREG estimator uses regression predictions on the target population to form
+the point estimate. The `order` and `use_ridge` arguments work the same way as for
+`"linearized"`.
+
+
+```r
+estimate(out, y, data = sample_ind, method = "greg", order = 2)
+#> Error in estimate(out, y, data = sample_ind, method = "greg", order = 2): could not find function "estimate"
+```
+
+### DRP estimator
+
+The double regression and post-stratification (DRP) estimator replaces the parametric regression
+with cross-fitted gradient-boosted trees (xgboost). Additional arguments
+(e.g. `nrounds`, `eta`) are forwarded directly to `xgboost`.
+
+
+```r
+estimate(out, y, data = sample_ind, method = "drp", nrounds = 200)
+#> Error in estimate(out, y, data = sample_ind, method = "drp", nrounds = 200): could not find function "estimate"
+```
+
+### Selecting lambda
+
+By default `estimate()` uses the auto-selected default lambda (the one that
+achieves at least 90% of the possible balance gain). You can override this with
+`lambda_idx` (an integer index into `out$lambda`) or `balance_threshold` (a
+value in (0, 1) that re-runs lambda selection):
+
+
+```r
+# use the weights at index 5 in the lambda grid
+estimate(out, y, data = sample_ind, lambda_idx = 5)
+#> Error in estimate(out, y, data = sample_ind, lambda_idx = 5): could not find function "estimate"
+
+# re-select lambda targeting 95% balance gain
+estimate(out, y, data = sample_ind, balance_threshold = 0.95)
+#> Error in estimate(out, y, data = sample_ind, balance_threshold = 0.95): could not find function "estimate"
 ```
