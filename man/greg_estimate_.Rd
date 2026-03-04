@@ -12,7 +12,7 @@ greg_estimate_(
   target_counts,
   order,
   lambda_val,
-  use_ridge = FALSE
+  use_ridge = TRUE
 )
 }
 \arguments{

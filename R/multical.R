@@ -93,15 +93,26 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
   # extract base weights from sample_data (must be done before create_units_sep
   # to preserve 1:1 row correspondence with sample_data)
   bw_quo <- enquo(base_weights)
+  tc_quo <- enquo(target_count)
   if(rlang::quo_is_null(bw_quo)) {
     bw_vec <- rep(1, nrow(sample_data))
   } else {
     bw_vec <- sample_data %>% pull(!!bw_quo)
   }
 
+  # rescale bw_vec so that it sums to the total target count
+  if(rlang::quo_is_null(tc_quo)) {
+    total_target <- nrow(pop_data)
+  } else {
+    total_target <- pop_data %>%
+      summarise(total = sum(!!tc_quo), .groups = "drop") %>%
+      pull("total")
+  }
+  bw_vec <- bw_vec / sum(bw_vec) * total_target
+
   # build unit-level data frame: respondent rows + pop-only rows
   if(verbose) message("Creating table of unit counts")
-  units <- create_units_sep(formula, sample_data, pop_data, enquo(target_count))
+  units <- create_units_sep(formula, sample_data, pop_data, tc_quo)
   units <- units %>% mutate(.row_id = row_number())
 
   # pad bw_vec to the full length of `units` (respondents + pop-only rows).
@@ -120,9 +131,11 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
   # get weights (one per respondent, i.e. per unit with sample_count != 0)
   weights <- calibrate_(units %>% select(-c("sample_count", "target_count",
                                              "base_weight", ".row_id")),
-                        units$sample_count, units$target_count,
+                        units$sample_count,
+                        units$target_count,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
-                        lowlim, uplim, bw_vec_full, verbose, ...)
+                        lowlim, uplim,
+                        bw_vec_full, verbose, ...)
 
   # extract the weights matrix (respondents only, rows in sample_data order)
   weights_matrix <- as.matrix(weights)
@@ -148,11 +161,11 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
 #' @param formula The formula passed to \code{\link{multical}}.
 #' @param order Integer. Resolved order of interactions used in the calibration.
 #' @param balance_threshold Numeric in (0, 1). Fraction of the total possible
-#'   balance gain required to qualify a lambda for selection. Default 0.9.
+#'   balance gain required to qualify a lambda for selection. Default 0.95.
 #'
 #' @keywords internal
 new_multical <- function(weights_matrix, lambda, cells, formula, order,
-                         balance_threshold = 0.9) {
+                         balance_threshold = 0.95) {
   n_respondents <- sum(cells$sample_count != 0)
   default_lambda_idx <- select_default_lambda(
     weights_matrix, cells, lambda, order, balance_threshold
@@ -284,6 +297,9 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
 
   # default base weights to 1 (recovers standard regularization)
   if(is.null(base_weights)) base_weights <- rep(1, length(sample_counts))
+  # rescale target_counts to sum to the sample size
+  target_counts <- target_counts / sum(target_counts) * sum(sample_counts)
+  base_weights <- base_weights / sum(base_weights) * sum(sample_counts)
 
   if(is.null(order)) {
     order <- ncol(cells)
@@ -321,9 +337,12 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                            if(is.null(lambda)) 0 else lambda,
                            base_weights)
 
-
+  
+  P <- P
+  qvec <- qvec
   settings <- do.call(osqp::osqpSettings,
-                        c(list(...), list(verbose = verbose)))
+                        c(list(...),
+                          list(verbose = verbose)))
   if(verbose) message("Setting up optimization")
   solver <- osqp::osqp(P, qvec, constraints$A, constraints$l, constraints$u,
                        pars = settings)
@@ -345,6 +364,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
       # use warm start with previous solution to speed up optimization
       solver$WarmStart(x = x, y = y)
       sol_lam <- solver$Solve()
+      check_osqp_status_(sol_lam, context = paste0("lambda = ", lam_seq[i]))
       x <- sol_lam$x
       y <- sol_lam$y
       solution[, i] <- pmin(pmax(lowlim, x), uplim)
@@ -352,12 +372,36 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
     solution <- as.data.frame(solution)
     names(solution) <- lam_seq
   } else {
-    solution <- data.frame(pmin(pmax(lowlim, solver$Solve()$x), uplim))
+    sol <- solver$Solve()
+    check_osqp_status_(sol)
+    solution <- data.frame(pmin(pmax(lowlim, sol$x), uplim))
     names(solution) <- lambda
   }
   return(solution)
 
 }
+
+#' Check OSQP solver status and stop with an informative error if the problem
+#' was not solved.
+#' @param sol Solution object returned by \code{osqp::osqp(...)$Solve()}
+#' @param context Optional string appended to the error message (e.g. the
+#'   lambda value being solved).
+#' @keywords internal
+check_osqp_status_ <- function(sol, context = NULL) {
+  status <- sol$info$status
+  ok_statuses <- c("solved", "solved_inaccurate")
+  if (!status %in% ok_statuses) {
+    ctx <- if (!is.null(context)) paste0(" [", context, "]") else ""
+    stop(
+      "Calibration optimization failed", ctx, ": ", status, ".\n",
+      "This usually means the calibration constraints are infeasible. ",
+      "Consider relaxing the constraints (e.g. collapsing covariate ",
+      "categories) or checking that the ",
+      "target population is compatible with the sample)."
+    )
+  }
+}
+
 
 #' Creates the underlying design matrix to solve the multilevel calibration
 #' optimization problem
@@ -418,10 +462,26 @@ create_rake_constraints <- function(cells, D, sample_counts, target_counts,
   if(verbose) message("\tx Exact marginal balance constraints")
   design_mat <- Matrix::sparse.model.matrix(~ . - 1, cells)
 
-  A_marg <- Matrix::t(design_mat[sample_counts != 0, , drop = F] * 
-                      sample_counts_nempty)
-  l_marg <- as.numeric(Matrix::t(design_mat) %*% target_counts)
+  A_marg <- Matrix::t(design_mat[sample_counts != 0, , drop = F] *
+                      sample_counts_nempty) / sum(sample_counts)
+  l_marg <- as.numeric(Matrix::t(design_mat) %*% target_counts) / sum(sample_counts)
   u_marg <- l_marg
+
+  # Check for infeasible constraints (all-zero rows with non-zero RHS)
+  all_zero_rows <- Matrix::rowSums(A_marg != 0) == 0
+  infeasible_idx <- which(all_zero_rows & l_marg != 0)
+  if(length(infeasible_idx) > 0) {
+    row_names <- rownames(A_marg)[infeasible_idx]
+    warning("Infeasible raking constraint(s). The following values never appear ",
+         "in the sample but do appear in the target population:\n\n",
+         paste(row_names, collapse = "\n"),
+         "\n\nIt is not possible to calibrate the margin for these values. ",
+         "These constraints have been dropped from the calibration procedure.\n\n",
+         "Consider collapsing categories or changing the target population.")
+    A_marg <- A_marg[-infeasible_idx, , drop = F]
+    l_marg <- l_marg[-infeasible_idx]
+    u_marg <- u_marg[-infeasible_idx]
+  }
 
   # combine
   A <- rbind(A_sumN, A_nn, A_marg)

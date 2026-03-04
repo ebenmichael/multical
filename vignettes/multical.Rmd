@@ -183,12 +183,12 @@ You can set the interaction order explicitly:
 estimate(out, y, data = sample_ind, method = "linearized", order = 2)
 ```
 
-Pass `use_ridge = TRUE` to fit the outcome model with ridge regression instead
-(penalty chosen by 10-fold cross-validation via `glmnet`):
+Ridge regression (penalty chosen by 10-fold cross-validation via `glmnet`) is
+used by default. Pass `use_ridge = FALSE` to use plain OLS instead:
 
 ```{r estimate_linearized_ridge}
 estimate(out, y, data = sample_ind, method = "linearized", order = 2,
-         use_ridge = TRUE)
+         use_ridge = FALSE)
 ```
 
 ### Hajek estimator

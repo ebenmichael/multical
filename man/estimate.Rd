@@ -15,7 +15,7 @@ estimate(object, ...)
   lambda_idx = NULL,
   balance_threshold = NULL,
   order = NULL,
-  use_ridge = FALSE,
+  use_ridge = TRUE,
   ...
 )
 }
@@ -69,7 +69,7 @@ Defaults to \code{1} when \code{method = "linearized"} and
 \code{"linearized"} or \code{"greg"}, uses ridge regression
 (via \code{cv.glmnet} with \code{alpha = 0}, penalty chosen by 10-fold CV)
 instead of OLS to fit the outcome model. Ignored for \code{"hajek"} and
-\code{"drp"}. Default \code{FALSE}.}
+\code{"drp"}. Default \code{TRUE}.}
 }
 \value{
 A data frame with columns:

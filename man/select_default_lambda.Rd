@@ -9,7 +9,7 @@ select_default_lambda(
   cells,
   lambda,
   order,
-  balance_threshold = 0.9
+  balance_threshold = 0.95
 )
 }
 \arguments{
@@ -22,7 +22,7 @@ select_default_lambda(
 
 \item{order}{Integer. Order of interactions for computing balance}
 
-\item{balance_threshold}{Numeric in (0, 1). Default 0.9}
+\item{balance_threshold}{Numeric in (0, 1). Default 0.95}
 }
 \value{
 Integer index into \code{lambda}

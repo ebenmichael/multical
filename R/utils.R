@@ -10,7 +10,7 @@
 #' 
 #' @keywords internal
 compute_balance <- function(D, weights, sample_counts, target_counts) {
-  as.numeric(Matrix::t(D) %*% (weights * sample_counts - target_counts))
+  as.numeric(Matrix::t(D) %*% (weights * sample_counts / sum(weights * sample_counts)  - target_counts / sum(target_counts)))
 }
 
 #' Get the difference between the reweighted sample and the target
@@ -83,7 +83,7 @@ get_balance_v_sample_size.multical <- function(x, order, ...) {
 
   imbals <- get_balance(x, order) %>%
     group_by(.data$lambda) %>%
-    summarise(imbalance = sqrt(sum(.data$difference ^ 2) / target_pop)) %>%
+    summarise(imbalance = sqrt(sum(.data$difference ^ 2))) %>%
     ungroup()
 
   neff <- do.call(rbind, lapply(seq_along(x$lambda), function(i) {
@@ -109,12 +109,12 @@ get_balance_v_sample_size.multical <- function(x, order, ...) {
 #'   \code{target_count}, \code{base_weight}
 #' @param lambda Numeric vector of lambda values
 #' @param order Integer. Order of interactions for computing balance
-#' @param balance_threshold Numeric in (0, 1). Default 0.9
+#' @param balance_threshold Numeric in (0, 1). Default 0.95
 #'
 #' @return Integer index into \code{lambda}
 #' @keywords internal
 select_default_lambda <- function(weights_matrix, cells, lambda, order,
-                                  balance_threshold = 0.9) {
+                                  balance_threshold = 0.95) {
   # with a single lambda there is nothing to select
   if (length(lambda) == 1L) return(1L)
 
@@ -305,7 +305,7 @@ estimate <- function(object, ...) UseMethod("estimate")
 #'   \code{"linearized"} or \code{"greg"}, uses ridge regression
 #'   (via \code{cv.glmnet} with \code{alpha = 0}, penalty chosen by 10-fold CV)
 #'   instead of OLS to fit the outcome model. Ignored for \code{"hajek"} and
-#'   \code{"drp"}. Default \code{FALSE}.
+#'   \code{"drp"}. Default \code{TRUE}.
 #' @param ... Additional arguments to pass to xgboost when \code{method = "drp"}. Ignored for other methods.
 #'
 #' @return A data frame with columns:
@@ -324,7 +324,7 @@ estimate <- function(object, ...) UseMethod("estimate")
 #' @export
 estimate.multical <- function(object, y, data = NULL, method = "linearized",
                               lambda_idx = NULL, balance_threshold = NULL,
-                              order = NULL, use_ridge = FALSE, ...) {
+                              order = NULL, use_ridge = TRUE, ...) {
   y_quo <- enquo(y)
   y_vec <- eval_tidy(y_quo, data = data)
 
@@ -448,7 +448,7 @@ linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order, lambda_val,
   form_str <- if (order == 1) "~ ." else paste0("~ .^", order)
   X        <- model.matrix(as.formula(form_str), data = cells_resp)
   X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]
-  if (use_ridge) {
+  if (use_ridge & ncol(X_noInt) > 1) {
     cv_fit <- cv.glmnet(X_noInt, y_vec, alpha = 0)
     fitted <- as.numeric(predict(cv_fit, newx = X_noInt, s = "lambda.min"))
     resids <- y_vec - fitted
@@ -491,7 +491,7 @@ linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order, lambda_val,
 #' @keywords internal
 greg_estimate_ <- function(y_vec, w_vec, cells_resp, cells_target,
                                  target_counts, order, lambda_val,
-                                 use_ridge = FALSE) {
+                                 use_ridge = TRUE) {
   form_str <- if (order == 1) "~ ." else paste0("~ .^", order)
   X        <- model.matrix(as.formula(form_str), data = cells_resp)
   X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]

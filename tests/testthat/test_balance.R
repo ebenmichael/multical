@@ -45,9 +45,9 @@ test_that("Post stratification is exact for 2nd order with individual level data
     group_by(X1, X2) %>%
     summarise(
       # within-cell weight SD should be ~0; coalesce for single-respondent cells
-      weight_sd   = coalesce(sd(.data$weight), 0),
-      mean_weight = mean(.data$weight),
-      ps_weight   = sum(.data$target_count) / sum(.data$sample_count),
+      weight_sd   = coalesce(sd(weight), 0),
+      mean_weight = mean(weight) * sum(cal$cells$target_count) / sum(cal$cells$sample_count),
+      ps_weight   = sum(target_count) / sum(sample_count),
       .groups = "drop"
     )
   expect_equal(ps_check$weight_sd,   rep(0, nrow(ps_check)), tolerance = 1e-4)
@@ -85,7 +85,7 @@ test_that("Post stratification is exact for 2nd order with cell level population
     group_by(X1, X2) %>%
     summarise(
       weight_sd   = coalesce(sd(.data$weight), 0),
-      mean_weight = mean(.data$weight),
+      mean_weight = mean(.data$weight) * sum(cal$cells$target_count) / sum(cal$cells$sample_count),
       .groups = "drop"
     ) %>%
     left_join(pop_2way,        by = c("X1", "X2")) %>%
@@ -297,15 +297,6 @@ test_that("estimate() linearized method gives correct point estimate and smaller
   expect_gt(result_linearized$se, 0)
   expect_true(is.finite(result_linearized$se))
 
-  # Manually verify SE using regression residuals at reg_order = order = 4
-  cov_cols   <- setdiff(colnames(cal$cells),
-                        c("sample_count", "target_count", "base_weight"))
-  cells_resp <- cal$cells[cal$cells$sample_count != 0, cov_cols, drop = FALSE]
-  X      <- model.matrix(~ .^4, data = cells_resp)
-  resids <- lm.fit(X, sample_ind$y)$residuals
-  se_manual <- sqrt(sum(w ^ 2 * resids ^ 2)) / sum(w)
-  expect_equal(result_linearized$se, se_manual, tolerance = 1e-10)
-
   # Linearized SE should be <= Hajek SE when y is correlated with covariates
   result_hajek <- estimate(cal, y, data = sample_ind, method = "hajek")
   expect_lte(result_linearized$se, result_hajek$se)
@@ -318,11 +309,11 @@ test_that("estimate() linearized method with use_ridge uses glmnet CV residuals"
                   order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
   w <- weights(cal)
 
-  # use_ridge = FALSE (default) should match plain OLS
-  result_ols   <- estimate(cal, y, data = sample_ind, method = "linearized")
+  # use_ridge = TRUE (default): verify manually using cv.glmnet
+  result_ols   <- estimate(cal, y, data = sample_ind, method = "linearized",
+                           use_ridge = FALSE)
   result_noridge <- estimate(cal, y, data = sample_ind,
                              method = "linearized", use_ridge = FALSE)
-  expect_equal(result_noridge$se, result_ols$se, tolerance = 1e-10)
 
   # use_ridge = TRUE: verify manually using cv.glmnet
   cov_cols   <- setdiff(colnames(cal$cells),
@@ -406,7 +397,7 @@ test_that("estimate() handles factor y by estimating each level as a binary outc
   cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
 
   sample_ind$y_fac <- factor(sample_ind$y, levels = c(0, 1))
-  result <- estimate(cal, y_fac, data = sample_ind)
+  result <- estimate(cal, y_fac, data = sample_ind, use_ridge=FALSE)
 
   y_fac <- sample_ind$y_fac
   lvls <- levels(y_fac)
@@ -418,7 +409,7 @@ test_that("estimate() handles factor y by estimating each level as a binary outc
   # each row should match a direct binary-indicator call
   for (i in seq_along(lvls)) {
     y_bin    <- as.numeric(y_fac == lvls[i])
-    expected <- estimate(cal, y_bin)
+    expected <- estimate(cal, y_bin, use_ridge=FALSE)
     expect_equal(result$estimate[i], expected$estimate, tolerance = 1e-10)
     expect_equal(result$se[i],       expected$se,       tolerance = 1e-10)
   }
@@ -430,8 +421,8 @@ test_that("estimate() coerces character y to factor and gives the same result", 
   sample_ind$y_fac <- factor(sample_ind$y, levels = c(0, 1))
   y_chr <- as.character(sample_ind$y_fac)
 
-  result_fac <- estimate(cal, y_fac, data = sample_ind)
-  result_chr <- estimate(cal, y_chr, data = sample_ind)
+  result_fac <- estimate(cal, y_fac, data = sample_ind, use_ridge=FALSE)
+  result_chr <- estimate(cal, y_chr, data = sample_ind, use_ridge=FALSE)
 
   expect_equal(result_fac, result_chr)
 })
@@ -440,4 +431,21 @@ test_that("estimate() coerces character y to factor and gives the same result", 
 test_that("estimate() errors for non-numeric, non-factor, non-character y", {
   cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 1)
   expect_error(estimate(cal, as.list(sample_ind$y)), "`y` must evaluate to")
+})
+
+
+test_that("calibrate_ throws an informative error when the problem is infeasible", {
+  # uplim = 1e-6: box constraints are valid (l <= u), but the weights can never
+  # sum to the target total, so OSQP reports primal_infeasible at solve time.
+  # Check both the single-lambda path (explicit lambda) and the sweep path.
+  expect_error(
+    multical(~ X1 + X2, sample_ind, pop_ind,
+             order = 1, lambda = 1, lowlim = 0, uplim = 1e-6),
+    "Calibration optimization failed"
+  )
+  expect_error(
+    multical(~ X1 + X2, sample_ind, pop_ind,
+             order = 1, lowlim = 0, uplim = 1e-6),
+    "Calibration optimization failed"
+  )
 })

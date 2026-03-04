@@ -10,7 +10,7 @@ new_multical(
   cells,
   formula,
   order,
-  balance_threshold = 0.9
+  balance_threshold = 0.95
 )
 }
 \arguments{
@@ -28,7 +28,7 @@ followed by one row per pop-only cell.}
 \item{order}{Integer. Resolved order of interactions used in the calibration.}
 
 \item{balance_threshold}{Numeric in (0, 1). Fraction of the total possible
-balance gain required to qualify a lambda for selection. Default 0.9.}
+balance gain required to qualify a lambda for selection. Default 0.95.}
 }
 \description{
 Construct a multical object
