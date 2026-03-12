@@ -126,7 +126,7 @@ out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind)
 plot(out)
 ```
 
-By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 90% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific amount of balance gain to target (e.g. `weights(out, balance_gain_target = 0.95)` returns weights that give at least 95% of the total possible balance gain).
+By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 95% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific balance threshold (e.g. `weights(out, balance_threshold = 0.90)` returns weights that give at least 90% of the total possible balance gain).
 
 For large datasets with many covariates, start with a low `order` and increase as needed — the number of interaction terms grows quickly.
 
@@ -169,26 +169,11 @@ out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4)
 
 ### Linearized estimator (default)
 
-The default. Fits an OLS model of `y` on the covariate design matrix and uses
-the residuals in the SE formula.
-The `order` argument sets the interaction order in the regression (defaults to 1).
+The default. Fits a first-order OLS model of `y` on the covariate design matrix
+and uses the residuals in the sandwich SE formula.
 
 ```{r estimate_linearized}
 estimate(out, y, data = sample_ind)
-```
-
-You can set the interaction order explicitly:
-
-```{r estimate_linearized_order}
-estimate(out, y, data = sample_ind, method = "linearized", order = 2)
-```
-
-Ridge regression (penalty chosen by 10-fold cross-validation via `glmnet`) is
-used by default. Pass `use_ridge = FALSE` to use plain OLS instead:
-
-```{r estimate_linearized_ridge}
-estimate(out, y, data = sample_ind, method = "linearized", order = 2,
-         use_ridge = FALSE)
 ```
 
 ### Hajek estimator
@@ -202,12 +187,12 @@ estimate(out, y, data = sample_ind, method = "hajek")
 
 ### GREG estimator
 
-The GREG estimator uses regression predictions on the target population to form
-the point estimate. The `order` and `use_ridge` arguments work the same way as for
-`"linearized"`.
+The GREG estimator uses cross-fitted ridge regression predictions on the target
+population to form the point estimate. The interaction order is inherited from
+the `multical` object.
 
 ```{r estimate_greg}
-estimate(out, y, data = sample_ind, method = "greg", order = 2)
+estimate(out, y, data = sample_ind, method = "greg")
 ```
 
 ### DRP estimator
@@ -223,7 +208,7 @@ estimate(out, y, data = sample_ind, method = "drp", nrounds = 200)
 ### Selecting lambda
 
 By default `estimate()` uses the auto-selected default lambda (the one that
-achieves at least 90% of the possible balance gain). You can override this with
+achieves at least 95% of the possible balance gain). You can override this with
 `lambda_idx` (an integer index into `out$lambda`) or `balance_threshold` (a
 value in (0, 1) that re-runs lambda selection):
 
@@ -234,3 +219,22 @@ estimate(out, y, data = sample_ind, lambda_idx = 5)
 # re-select lambda targeting 95% balance gain
 estimate(out, y, data = sample_ind, balance_threshold = 0.95)
 ```
+
+### Subsetting respondents
+
+The `subset` argument restricts estimation to a subset of respondents without
+refitting the calibration weights. Pass either a logical vector (one entry per
+respondent, `TRUE` to retain) or an integer index vector.
+
+```{r estimate_subset}
+# Estimate on respondents where a covariate equals a specific value
+mask <- sample_ind$X1 == levels(sample_ind$X1)[1]
+estimate(out, y, data = sample_ind, subset = mask)
+
+# Integer index version
+estimate(out, y, data = sample_ind, subset = which(mask))
+```
+
+If any retained respondent has a missing outcome (`NA`), those observations are
+automatically excluded and a warning is issued. Respondents excluded by `subset`
+are never checked for `NA`.

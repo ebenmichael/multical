@@ -128,17 +128,17 @@ We can inspect marginal balance using `get_balance`:
 
 ```r
 get_balance(out, 1)
-#>    lambda term   difference
-#> 1       0  X11 5.989277e-05
-#> 2       0  X12 4.731923e-05
-#> 3       0  X13 2.252074e-05
-#> 4       0  X22 5.984805e-05
-#> 5       0  X23 9.856925e-06
-#> 6       0  X24 1.242060e-05
-#> 7       0  X32 6.077409e-05
-#> 8       0  X42 8.370378e-06
-#> 9       0  X43 9.729019e-06
-#> 10      0  X44 9.917186e-05
+#>    lambda term    difference
+#> 1       0  X11 -1.792114e-11
+#> 2       0  X12 -2.996280e-12
+#> 3       0  X13  2.091541e-11
+#> 4       0  X22  6.848733e-11
+#> 5       0  X23  1.248037e-10
+#> 6       0  X24  4.920461e-11
+#> 7       0  X32  1.282576e-10
+#> 8       0  X42  4.822429e-11
+#> 9       0  X43 -1.099640e-11
+#> 10      0  X44  8.450233e-11
 ```
 
 To estimate the population mean of an outcome, use the `estimate()` function
@@ -147,8 +147,8 @@ To estimate the population mean of an outcome, use the `estimate()` function
 
 ```r
 estimate(out, y, data = sample_ind)
-#>   estimate         se lambda     method
-#> 1 0.539679 0.02291384      0 linearized
+#>   estimate         se     method lambda
+#> 1 0.539679 0.02291384 linearized      0
 ```
 
 ### Higher-order calibration with a fixed lambda
@@ -161,18 +161,18 @@ out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4, lambda = 1)
 
 rbind(head(get_balance(out, 4)), tail(get_balance(out, 4)))
 #>     lambda            term    difference
-#> 1        1             X11 -1.709178e-07
-#> 2        1             X12  3.146617e-07
-#> 3        1             X13  1.247188e-07
-#> 4        1             X22 -4.474253e-07
-#> 5        1             X23  2.841223e-07
-#> 6        1             X24 -4.281146e-07
-#> 104      1 X12:X22:X32:X44 -5.394362e-01
-#> 105      1 X13:X22:X32:X44 -1.663485e+00
-#> 106      1 X12:X23:X32:X44  2.994214e+00
-#> 107      1 X13:X23:X32:X44  1.438081e+00
-#> 108      1 X12:X24:X32:X44 -3.621160e+00
-#> 109      1 X13:X24:X32:X44  1.282460e+00
+#> 1        1             X11  1.563083e-11
+#> 2        1             X12  1.950679e-11
+#> 3        1             X13 -3.514009e-11
+#> 4        1             X22 -5.916079e-11
+#> 5        1             X23 -1.039975e-10
+#> 6        1             X24  2.656954e-11
+#> 104      1 X12:X22:X32:X44 -2.355217e-04
+#> 105      1 X13:X22:X32:X44 -1.255785e-03
+#> 106      1 X12:X23:X32:X44  1.505367e-03
+#> 107      1 X13:X23:X32:X44  8.009261e-04
+#> 108      1 X12:X24:X32:X44 -1.809410e-03
+#> 109      1 X13:X24:X32:X44  5.229173e-04
 ```
 
 ### Selecting lambda automatically
@@ -190,7 +190,7 @@ plot(out)
 
 ![plot of chunk multical_indiv_lambda](figure/multical_indiv_lambda-1.png)
 
-By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 90% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific amount of balance gain to target (e.g. `weights(out, balance_gain_target = 0.95)` returns weights that give at least 95% of the total possible balance gain).
+By default, the `weights()` function will extract the weights corresponding to the value of `lambda` that achieves 95% of the total possible balance gain. You can override this by either (i) supplying a specific index to choose from (e.g. `weights(out, lambda_idx = 2)` returns weights corresponding to `out$lambda[2]`) or (ii) supplying a specific balance threshold (e.g. `weights(out, balance_threshold = 0.90)` returns weights that give at least 90% of the total possible balance gain).
 
 For large datasets with many covariates, start with a low `order` and increase as needed — the number of interaction terms grows quickly.
 
@@ -210,8 +210,8 @@ Estimation works the same way (using the default linearized estimator):
 
 ```r
 estimate(out, y, data = sample_ind)
-#>    estimate         se lambda     method
-#> 1 0.5313944 0.02378001      1 linearized
+#>    estimate         se     method lambda
+#> 1 0.5323389 0.02374401 linearized      1
 ```
 
 
@@ -238,35 +238,14 @@ out <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind, order = 4)
 
 ### Linearized estimator (default)
 
-The default. Fits an OLS model of `y` on the covariate design matrix and uses
-the residuals in the SE formula.
-The `order` argument sets the interaction order in the regression (defaults to 1).
+The default. Fits a first-order OLS model of `y` on the covariate design matrix
+and uses the residuals in the sandwich SE formula.
 
 
 ```r
 estimate(out, y, data = sample_ind)
-#>   estimate         se  lambda     method
-#> 1 0.533156 0.02352398 4.79876 linearized
-```
-
-You can set the interaction order explicitly:
-
-
-```r
-estimate(out, y, data = sample_ind, method = "linearized", order = 2)
-#>   estimate         se  lambda     method
-#> 1 0.533156 0.02280711 4.79876 linearized
-```
-
-Pass `use_ridge = TRUE` to fit the outcome model with ridge regression instead
-(penalty chosen by 10-fold cross-validation via `glmnet`):
-
-
-```r
-estimate(out, y, data = sample_ind, method = "linearized", order = 2,
-         use_ridge = TRUE)
-#>   estimate         se  lambda     method
-#> 1 0.533156 0.02365524 4.79876 linearized
+#>   estimate         se     method    lambda
+#> 1 0.531562 0.02377138 linearized 0.7247596
 ```
 
 ### Hajek estimator
@@ -277,21 +256,21 @@ without any regression adjustment.
 
 ```r
 estimate(out, y, data = sample_ind, method = "hajek")
-#>   estimate         se  lambda method
-#> 1 0.533156 0.02367092 4.79876  hajek
+#>   estimate         se method    lambda
+#> 1 0.531562 0.02394727  hajek 0.7247596
 ```
 
 ### GREG estimator
 
-The GREG estimator uses regression predictions on the target population to form
-the point estimate. The `order` and `use_ridge` arguments work the same way as for
-`"linearized"`.
+The GREG estimator uses cross-fitted ridge regression predictions on the target
+population to form the point estimate. The interaction order is inherited from
+the `multical` object.
 
 
 ```r
-estimate(out, y, data = sample_ind, method = "greg", order = 2)
-#>   estimate         se  lambda method
-#> 1 0.534722 0.02280711 4.79876   greg
+estimate(out, y, data = sample_ind, method = "greg")
+#>    estimate         se method    lambda
+#> 1 0.5328709 0.02397813   greg 0.7247596
 ```
 
 ### DRP estimator
@@ -303,14 +282,14 @@ with cross-fitted gradient-boosted trees (xgboost). Additional arguments
 
 ```r
 estimate(out, y, data = sample_ind, method = "drp", nrounds = 200)
-#>    estimate         se  lambda method
-#> 1 0.5283282 0.02611627 4.79876    drp
+#>    estimate         se method    lambda
+#> 1 0.5251385 0.02656333    drp 0.7247596
 ```
 
 ### Selecting lambda
 
 By default `estimate()` uses the auto-selected default lambda (the one that
-achieves at least 90% of the possible balance gain). You can override this with
+achieves at least 95% of the possible balance gain). You can override this with
 `lambda_idx` (an integer index into `out$lambda`) or `balance_threshold` (a
 value in (0, 1) that re-runs lambda selection):
 
@@ -318,11 +297,35 @@ value in (0, 1) that re-runs lambda selection):
 ```r
 # use the weights at index 5 in the lambda grid
 estimate(out, y, data = sample_ind, lambda_idx = 5)
-#>    estimate         se   lambda     method
-#> 1 0.5375823 0.02296298 182.0021 linearized
+#>    estimate         se     method   lambda
+#> 1 0.5335186 0.02345171 linearized 8.181361
 
 # re-select lambda targeting 95% balance gain
 estimate(out, y, data = sample_ind, balance_threshold = 0.95)
-#>    estimate        se   lambda     method
-#> 1 0.5324562 0.0236437 1.428279 linearized
+#>   estimate         se     method    lambda
+#> 1 0.531562 0.02377138 linearized 0.7247596
 ```
+
+### Subsetting respondents
+
+The `subset` argument restricts estimation to a subset of respondents without
+refitting the calibration weights. Pass either a logical vector (one entry per
+respondent, `TRUE` to retain) or an integer index vector.
+
+
+```r
+# Estimate on respondents where a covariate equals a specific value
+mask <- sample_ind$X1 == levels(sample_ind$X1)[1]
+estimate(out, y, data = sample_ind, subset = mask)
+#>    estimate         se     method    lambda
+#> 1 0.5358512 0.03725474 linearized 0.7247596
+
+# Integer index version
+estimate(out, y, data = sample_ind, subset = which(mask))
+#>    estimate         se     method    lambda
+#> 1 0.5358512 0.03725474 linearized 0.7247596
+```
+
+If any retained respondent has a missing outcome (`NA`), those observations are
+automatically excluded and a warning is issued. Respondents excluded by `subset`
+are never checked for `NA`.

@@ -45,7 +45,7 @@ regression-assisted SE. OLS residuals from a first-order design matrix
 are used in the sandwich SE formula.}
 \item{\code{"hajek"}}{Plain calibration-weighted mean (Horvitz-Thompson
 style) with Taylor linearization SE.}
-\item{\code{"greg"}}{GREG (generalised regression) estimator with
+\item{\code{"greg"}}{GREG (generalized regression) estimator with
 cross-fitted ridge regression. The point estimate is the weighted mean
 of ridge-predicted values in the target population plus the
 calibration-weighted mean of residuals. The interaction order matches
