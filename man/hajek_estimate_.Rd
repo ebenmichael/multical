@@ -4,17 +4,15 @@
 \alias{hajek_estimate_}
 \title{Internal Hajek (weighted mean) estimator}
 \usage{
-hajek_estimate_(y_vec, w_vec, lambda_val)
+hajek_estimate_(y_vec, w_vec)
 }
 \arguments{
 \item{y_vec}{Numeric outcome vector (length = n_respondents)}
 
 \item{w_vec}{Numeric weight vector (length = n_respondents)}
-
-\item{lambda_val}{Scalar lambda value used (for labelling output)}
 }
 \value{
-A one-row data frame with columns estimate, se, lambda, method
+A one-row data frame with columns estimate, se, method
 }
 \description{
 Internal Hajek (weighted mean) estimator

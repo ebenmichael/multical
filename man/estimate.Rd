@@ -14,8 +14,7 @@ estimate(object, ...)
   method = "linearized",
   lambda_idx = NULL,
   balance_threshold = NULL,
-  order = NULL,
-  use_ridge = TRUE,
+  nfolds = 3,
   ...
 )
 }
@@ -41,14 +40,15 @@ to factor (levels in alphabetical order) before processing.
 \item{method}{Character string selecting the estimator:
 \describe{
 \item{\code{"linearized"} (default)}{Calibration-weighted mean with a
-regression-assisted SE. OLS or ridge regression residuals from a design matrix of order
-\code{order} are used in the sandwich SE formula.}
+regression-assisted SE. OLS residuals from a first-order design matrix
+are used in the sandwich SE formula.}
 \item{\code{"hajek"}}{Plain calibration-weighted mean (Horvitz-Thompson
 style) with Taylor linearization SE.}
-\item{\code{"greg"}}{GREG (generalised regression) estimator. The point
-estimate is the weighted mean of OLS-predicted values in the target
-population plus the calibration-weighted mean of residuals. More
-efficient than \code{"hajek"} when the outcome model fits well.}
+\item{\code{"greg"}}{GREG (generalised regression) estimator with
+cross-fitted ridge regression. The point estimate is the weighted mean
+of ridge-predicted values in the target population plus the
+calibration-weighted mean of residuals. The interaction order matches
+the order used in the \code{multical} call.}
 \item{\code{"drp"}}{Double Regression with Post-Stratification estimator. Uses
 cross-fitted gradient-boosted trees (xgboost) in place of OLS.
 Requires the \pkg{xgboost} package.}
@@ -60,16 +60,8 @@ lambda's weights to use. Defaults to \code{object$default_lambda_idx}.}
 \item{balance_threshold}{Numeric in (0, 1). If supplied, re-runs lambda
 selection with this threshold (overrides \code{lambda_idx}).}
 
-\item{order}{Integer. Order of interactions used in the regression model
-when \code{method = "linearized"} or \code{method = "greg"}.
-Defaults to \code{1} when \code{method = "linearized"} and
-\code{object$order} when \code{method = "greg"}.}
-
-\item{use_ridge}{Logical. When \code{TRUE} and \code{method} is
-\code{"linearized"} or \code{"greg"}, uses ridge regression
-(via \code{cv.glmnet} with \code{alpha = 0}, penalty chosen by 10-fold CV)
-instead of OLS to fit the outcome model. Ignored for \code{"hajek"} and
-\code{"drp"}. Default \code{TRUE}.}
+\item{nfolds}{Integer. Number of cross-fitting folds used when
+\code{method = "greg"} or \code{method = "drp"}. Default \code{3}.}
 }
 \value{
 A data frame with columns:

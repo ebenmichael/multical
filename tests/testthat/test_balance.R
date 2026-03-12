@@ -303,62 +303,6 @@ test_that("estimate() linearized method gives correct point estimate and smaller
 })
 
 
-test_that("estimate() linearized method with use_ridge uses glmnet CV residuals", {
-
-  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
-                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
-  w <- weights(cal)
-
-  # use_ridge = TRUE (default): verify manually using cv.glmnet
-  result_ols   <- estimate(cal, y, data = sample_ind, method = "linearized",
-                           use_ridge = FALSE)
-  result_noridge <- estimate(cal, y, data = sample_ind,
-                             method = "linearized", use_ridge = FALSE)
-
-  # use_ridge = TRUE: verify manually using cv.glmnet
-  cov_cols   <- setdiff(colnames(cal$cells),
-                        c("sample_count", "target_count", "base_weight"))
-  cells_resp <- cal$cells[cal$cells$sample_count != 0, cov_cols, drop = FALSE]
-  X        <- model.matrix(~ ., data = cells_resp)
-  X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]
-
-  set.seed(1011)
-  cv_fit   <- glmnet::cv.glmnet(X_noInt, sample_ind$y, alpha = 0)
-  fitted   <- as.numeric(predict(cv_fit, newx = X_noInt, s = "lambda.min"))
-  resids   <- sample_ind$y - fitted
-  se_manual <- sqrt(sum(w ^ 2 * resids ^ 2)) / sum(w)
-
-  set.seed(1011)
-  result_ridge <- estimate(cal, y, data = sample_ind,
-                           method = "linearized", use_ridge = TRUE)
-
-  expect_equal(result_ridge$se, se_manual, tolerance = 1e-10)
-  expect_equal(result_ridge$estimate,
-               sum(w * sample_ind$y) / sum(w), tolerance = 1e-10)
-  expect_gt(result_ridge$se, 0)
-  expect_true(is.finite(result_ridge$se))
-})
-
-
-test_that("estimate() greg with order = 1 gives the same point estimate as linearized (with and without ridge)", {
-  # When order-1 calibration constraints are satisfied, the GREG correction
-  # term (X_target_bar - X_sample_bar) %*% beta is zero, so the greg point
-  # estimate collapses to the Hajek weighted mean -- same as linearized.
-  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
-                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
-
-  result_lin  <- estimate(cal, y, data = sample_ind, method = "linearized")
-  result_greg <- estimate(cal, y, data = sample_ind, method = "greg", order = 1)
-
-  expect_equal(result_greg$estimate, result_lin$estimate, tolerance = 1e-6)
-
-  # Same should hold when ridge is used
-  set.seed(1011)
-  result_greg_ridge <- estimate(cal, y, data = sample_ind,
-                                method = "greg", order = 1, use_ridge = TRUE)
-  expect_equal(result_greg_ridge$estimate, result_lin$estimate, tolerance = 1e-6)
-})
-
 
 test_that("estimate() drp method returns correctly structured output", {
   skip_if_not_installed("xgboost")
@@ -370,7 +314,7 @@ test_that("estimate() drp method returns correctly structured output", {
 
   expect_s3_class(result_drp, "data.frame")
   expect_equal(nrow(result_drp), 1)
-  expect_named(result_drp, c("estimate", "se", "lambda", "method"))
+  expect_named(result_drp, c("estimate", "se", "method", "lambda"))
   expect_true(is.finite(result_drp$estimate))
   expect_gt(result_drp$se, 0)
   expect_true(is.finite(result_drp$se))
@@ -403,7 +347,7 @@ test_that("estimate() handles factor y by estimating each level as a binary outc
   lvls <- levels(y_fac)
   expect_s3_class(result, "data.frame")
   expect_equal(nrow(result), length(lvls))
-  expect_named(result, c("level", "estimate", "se", "lambda", "method"))
+  expect_named(result, c("level", "estimate", "se", "method", "lambda"))
   expect_equal(result$level, lvls)
 
   # each row should match a direct binary-indicator call

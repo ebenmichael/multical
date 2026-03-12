@@ -11,8 +11,8 @@ greg_estimate_(
   cells_target,
   target_counts,
   order,
-  lambda_val,
-  use_ridge = TRUE
+  use_ridge = TRUE,
+  nfolds = 3
 )
 }
 \arguments{
@@ -28,13 +28,16 @@ greg_estimate_(
 
 \item{order}{Integer. Order of interactions for the regression model}
 
-\item{lambda_val}{Scalar lambda value used (for labelling output)}
+\item{use_ridge}{Logical. Use cross-fitted ridge regression (via
+\code{cv.glmnet} with \code{alpha = 0}) to fit the outcome model.
+Default \code{TRUE}.}
 
-\item{use_ridge}{Logical. Use \code{cv.glmnet} ridge regression to fit
-the outcome model. Default \code{FALSE}.}
+\item{nfolds}{Integer. Number of cross-fitting folds when
+\code{use_ridge = TRUE}. Default \code{3}. Ignored when
+\code{use_ridge = FALSE}.}
 }
 \value{
-A one-row data frame with columns estimate, se, lambda, method
+A one-row data frame with columns estimate, se, method
 }
 \description{
 The point estimate is the population-weighted mean of regression predictions
@@ -44,7 +47,8 @@ where \eqn{e_i = y_i - \hat{y}_i}. The SE uses a sandwich estimator based
 on the same residuals. The outcome model is OLS (via \code{lm.fit}) by
 default; linearly-dependent columns (NA coefficients) are dropped
 symmetrically from both the respondent and target design matrices. When
-\code{use_ridge = TRUE}, ridge regression is used instead via
-\code{cv.glmnet} (\code{alpha = 0}, penalty at \code{lambda.min}).
+\code{use_ridge = TRUE}, cross-fitted ridge regression is used instead
+(via \code{\link{crossfit_ridge}}, which calls \code{cv.glmnet} with
+\code{alpha = 0} on each training fold).
 }
 \keyword{internal}

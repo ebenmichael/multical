@@ -2,12 +2,13 @@
 % Please edit documentation in R/utils.R
 \name{crossfit_xgboost}
 \alias{crossfit_xgboost}
-\title{Estimate outcome model with 3-fold cross-fitting using xgboost}
+\title{Estimate outcome model with cross-fitting using xgboost}
 \usage{
 crossfit_xgboost(
   X,
   y,
   target_X,
+  nfolds = 3,
   nrounds = 1000,
   verbose = 0,
   early_stopping_rounds = 20,
@@ -20,6 +21,8 @@ crossfit_xgboost(
 \item{y}{Numeric vector of observed outcomes (length = nrow(X))}
 
 \item{target_X}{Numeric matrix of target-population covariates (no intercept)}
+
+\item{nfolds}{Integer. Number of cross-fitting folds (default: 3)}
 
 \item{nrounds}{Number of boosting rounds for xgboost (default: 1000)}
 
@@ -38,9 +41,9 @@ A named list with:
 }
 }
 \description{
-Splits the respondent data into 3 folds. For each fold, fits an xgboost
-model on the remaining two folds and predicts on (a) the held-out fold and
-(b) all target-population cells. The target-population predictions are
-averaged across the 3 models.
+Splits the respondent data into \code{nfolds} folds. For each fold, fits an
+xgboost model on the remaining folds and predicts on (a) the held-out fold
+and (b) all target-population cells. The target-population predictions are
+averaged across the \code{nfolds} models.
 }
 \keyword{internal}

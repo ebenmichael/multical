@@ -4,14 +4,7 @@
 \alias{linearized_estimate_}
 \title{Internal estimator with linearized standard error}
 \usage{
-linearized_estimate_(
-  y_vec,
-  w_vec,
-  cells_resp,
-  order,
-  lambda_val,
-  use_ridge = FALSE
-)
+linearized_estimate_(y_vec, w_vec, cells_resp, order, use_ridge = FALSE)
 }
 \arguments{
 \item{y_vec}{Numeric outcome vector (length = n_respondents)}
@@ -22,13 +15,11 @@ linearized_estimate_(
 
 \item{order}{Integer. Order of interactions for the regression model}
 
-\item{lambda_val}{Scalar lambda value used (for labelling output)}
-
 \item{use_ridge}{Logical. Use \code{cv.glmnet} ridge regression to fit
 the outcome model. Default \code{FALSE}.}
 }
 \value{
-A one-row data frame with columns estimate, se, lambda, method
+A one-row data frame with columns estimate, se, method
 }
 \description{
 Point estimate is the calibration-weighted mean of \code{y}. The SE uses

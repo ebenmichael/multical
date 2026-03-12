@@ -281,14 +281,15 @@ estimate <- function(object, ...) UseMethod("estimate")
 #' @param method Character string selecting the estimator:
 #'   \describe{
 #'     \item{\code{"linearized"} (default)}{Calibration-weighted mean with a
-#'       regression-assisted SE. OLS or ridge regression residuals from a design matrix of order
-#'       \code{order} are used in the sandwich SE formula.}
+#'       regression-assisted SE. OLS residuals from a first-order design matrix
+#'       are used in the sandwich SE formula.}
 #'     \item{\code{"hajek"}}{Plain calibration-weighted mean (Horvitz-Thompson
 #'       style) with Taylor linearization SE.}
-#'     \item{\code{"greg"}}{GREG (generalised regression) estimator. The point
-#'       estimate is the weighted mean of OLS-predicted values in the target
-#'       population plus the calibration-weighted mean of residuals. More
-#'       efficient than \code{"hajek"} when the outcome model fits well.}
+#'     \item{\code{"greg"}}{GREG (generalised regression) estimator with
+#'       cross-fitted ridge regression. The point estimate is the weighted mean
+#'       of ridge-predicted values in the target population plus the
+#'       calibration-weighted mean of residuals. The interaction order matches
+#'       the order used in the \code{multical} call.}
 #'     \item{\code{"drp"}}{Double Regression with Post-Stratification estimator. Uses
 #'       cross-fitted gradient-boosted trees (xgboost) in place of OLS.
 #'       Requires the \pkg{xgboost} package.}
@@ -297,15 +298,8 @@ estimate <- function(object, ...) UseMethod("estimate")
 #'   lambda's weights to use. Defaults to \code{object$default_lambda_idx}.
 #' @param balance_threshold Numeric in (0, 1). If supplied, re-runs lambda
 #'   selection with this threshold (overrides \code{lambda_idx}).
-#' @param order Integer. Order of interactions used in the regression model
-#'   when \code{method = "linearized"} or \code{method = "greg"}.
-#'   Defaults to \code{1} when \code{method = "linearized"} and
-#'   \code{object$order} when \code{method = "greg"}.
-#' @param use_ridge Logical. When \code{TRUE} and \code{method} is
-#'   \code{"linearized"} or \code{"greg"}, uses ridge regression
-#'   (via \code{cv.glmnet} with \code{alpha = 0}, penalty chosen by 10-fold CV)
-#'   instead of OLS to fit the outcome model. Ignored for \code{"hajek"} and
-#'   \code{"drp"}. Default \code{TRUE}.
+#' @param nfolds Integer. Number of cross-fitting folds used when
+#'   \code{method = "greg"} or \code{method = "drp"}. Default \code{3}.
 #' @param ... Additional arguments to pass to xgboost when \code{method = "drp"}. Ignored for other methods.
 #'
 #' @return A data frame with columns:
@@ -324,7 +318,7 @@ estimate <- function(object, ...) UseMethod("estimate")
 #' @export
 estimate.multical <- function(object, y, data = NULL, method = "linearized",
                               lambda_idx = NULL, balance_threshold = NULL,
-                              order = NULL, use_ridge = TRUE, ...) {
+                              nfolds = 3, ...) {
   y_quo <- enquo(y)
   y_vec <- eval_tidy(y_quo, data = data)
 
@@ -343,8 +337,7 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
                                  method = method,
                                  lambda_idx = lambda_idx,
                                  balance_threshold = balance_threshold,
-                                 order = order,
-                                 use_ridge = use_ridge, ...)
+                                 nfolds = nfolds, ...)
       cbind(level = lvl, out, stringsAsFactors = FALSE)
     })
     return(do.call(rbind, results))
@@ -370,17 +363,15 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
   lam_val <- object$lambda[lam_idx]
 
   if (method == "hajek") {
-    return(hajek_estimate_(y_vec, w_vec, lam_val))
+    out <- hajek_estimate_(y_vec, w_vec)
   } else if (method == "linearized") {
-    if (is.null(order)) order <- 1
     cov_cols   <- setdiff(colnames(object$cells),
                           c("sample_count", "target_count", "base_weight"))
     cells_resp <- object$cells[object$cells$sample_count != 0, cov_cols,
                                drop = FALSE]
-    return(linearized_estimate_(y_vec, w_vec, cells_resp, order, lam_val,
-                                use_ridge))
+    out <- linearized_estimate_(y_vec, w_vec, cells_resp, order = 1,
+                                use_ridge = FALSE)
   } else if (method == "greg") {
-    if (is.null(order)) order <- object$order
     cov_cols   <- setdiff(colnames(object$cells),
                           c("sample_count", "target_count", "base_weight"))
     cells_resp <- object$cells[object$cells$sample_count != 0, cov_cols,
@@ -388,8 +379,8 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
     cells_target <- object$cells[object$cells$target_count != 0, cov_cols,
                                drop = FALSE]
     target_counts <- object$cells$target_count[object$cells$target_count != 0]
-    return(greg_estimate_(y_vec, w_vec, cells_resp, cells_target, target_counts, order, lam_val,
-                                use_ridge))
+    out <- greg_estimate_(y_vec, w_vec, cells_resp, cells_target, target_counts,
+                          object$order, use_ridge = TRUE, nfolds = nfolds)
   } else if(method == "drp") {
     cov_cols   <- setdiff(colnames(object$cells),
                           c("sample_count", "target_count", "base_weight"))
@@ -398,11 +389,13 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
     cells_target <- object$cells[object$cells$target_count != 0, cov_cols,
                                  drop = FALSE]
     target_counts <- object$cells$target_count[object$cells$target_count != 0]
-    return(drp_estimate_(y_vec, w_vec, cells_resp, cells_target, target_counts, lam_val,
-                                ...))
+    out <- drp_estimate_(y_vec, w_vec, cells_resp, cells_target, target_counts,
+                         nfolds = nfolds, ...)
   } else {
-  stop('Unknown method "', method, '". Supported: "hajek", "linearized", "greg", "drp".')
+    stop('Unknown method "', method, '". Supported: "hajek", "linearized", "greg", "drp".')
   }
+  out$lambda <- lam_val
+  return(out)
 }
 
 
@@ -410,17 +403,15 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
 #'
 #' @param y_vec Numeric outcome vector (length = n_respondents)
 #' @param w_vec Numeric weight vector (length = n_respondents)
-#' @param lambda_val Scalar lambda value used (for labelling output)
 #'
-#' @return A one-row data frame with columns estimate, se, lambda, method
+#' @return A one-row data frame with columns estimate, se, method
 #' @keywords internal
-hajek_estimate_ <- function(y_vec, w_vec, lambda_val) {
+hajek_estimate_ <- function(y_vec, w_vec) {
   w_sum  <- sum(w_vec)
   mu_hat <- sum(w_vec * y_vec) / w_sum
   # Taylor linearization variance: sum(w_i^2 (y_i - mu_hat)^2) / (sum w_i)^2
   se     <- sqrt(sum(w_vec ^ 2 * (y_vec - mu_hat) ^ 2)) / w_sum
-  data.frame(estimate = mu_hat, se = se, lambda = lambda_val,
-             method = "hajek")
+  data.frame(estimate = mu_hat, se = se, method = "hajek")
 }
 
 
@@ -437,18 +428,17 @@ hajek_estimate_ <- function(y_vec, w_vec, lambda_val) {
 #' @param w_vec Numeric weight vector (length = n_respondents)
 #' @param cells_resp Data frame of covariate columns for respondents only
 #' @param order Integer. Order of interactions for the regression model
-#' @param lambda_val Scalar lambda value used (for labelling output)
 #' @param use_ridge Logical. Use \code{cv.glmnet} ridge regression to fit
 #'   the outcome model. Default \code{FALSE}.
 #'
-#' @return A one-row data frame with columns estimate, se, lambda, method
+#' @return A one-row data frame with columns estimate, se, method
 #' @keywords internal
-linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order, lambda_val,
+linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order,
                                  use_ridge = FALSE) {
   form_str <- if (order == 1) "~ ." else paste0("~ .^", order)
   X        <- model.matrix(as.formula(form_str), data = cells_resp)
-  X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]
-  if (use_ridge & ncol(X_noInt) > 1) {
+  if (use_ridge & ncol(X) > 2) {
+    X_noInt <- X[, colnames(X) != "(Intercept)", drop = FALSE]
     cv_fit <- cv.glmnet(X_noInt, y_vec, alpha = 0)
     fitted <- as.numeric(predict(cv_fit, newx = X_noInt, s = "lambda.min"))
     resids <- y_vec - fitted
@@ -459,13 +449,12 @@ linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order, lambda_val,
   w_sum  <- sum(w_vec)
   mu_hat <- sum(w_vec * y_vec) / w_sum
   se     <- sqrt(sum(w_vec ^ 2 * resids ^ 2)) / w_sum
-  data.frame(estimate = mu_hat, se = se, lambda = lambda_val,
-             method = "linearized")
+  data.frame(estimate = mu_hat, se = se, method = "linearized")
 }
 
 
 
-#' Internal GREG (generalised regression) estimator
+#' Internal GREG (generalized regression) estimator
 #'
 #' The point estimate is the population-weighted mean of regression predictions
 #' on the target cells plus the calibration-weighted mean of residuals:
@@ -474,8 +463,9 @@ linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order, lambda_val,
 #' on the same residuals. The outcome model is OLS (via \code{lm.fit}) by
 #' default; linearly-dependent columns (NA coefficients) are dropped
 #' symmetrically from both the respondent and target design matrices. When
-#' \code{use_ridge = TRUE}, ridge regression is used instead via
-#' \code{cv.glmnet} (\code{alpha = 0}, penalty at \code{lambda.min}).
+#' \code{use_ridge = TRUE}, cross-fitted ridge regression is used instead
+#' (via \code{\link{crossfit_ridge}}, which calls \code{cv.glmnet} with
+#' \code{alpha = 0} on each training fold).
 #'
 #' @param y_vec Numeric outcome vector (length = n_respondents)
 #' @param w_vec Numeric weight vector (length = n_respondents)
@@ -483,26 +473,27 @@ linearized_estimate_ <- function(y_vec, w_vec, cells_resp, order, lambda_val,
 #' @param cells_target Data frame of covariate columns for target population only
 #' @param target_counts Vector of target counts for each cell in \code{cells_target}
 #' @param order Integer. Order of interactions for the regression model
-#' @param lambda_val Scalar lambda value used (for labelling output)
-#' @param use_ridge Logical. Use \code{cv.glmnet} ridge regression to fit
-#'   the outcome model. Default \code{FALSE}.
+#' @param use_ridge Logical. Use cross-fitted ridge regression (via
+#'   \code{cv.glmnet} with \code{alpha = 0}) to fit the outcome model.
+#'   Default \code{TRUE}.
+#' @param nfolds Integer. Number of cross-fitting folds when
+#'   \code{use_ridge = TRUE}. Default \code{3}. Ignored when
+#'   \code{use_ridge = FALSE}.
 #'
-#' @return A one-row data frame with columns estimate, se, lambda, method
+#' @return A one-row data frame with columns estimate, se, method
 #' @keywords internal
 greg_estimate_ <- function(y_vec, w_vec, cells_resp, cells_target,
-                                 target_counts, order, lambda_val,
-                                 use_ridge = TRUE) {
+                                 target_counts, order,
+                                 use_ridge = TRUE, nfolds = 3) {
   form_str <- if (order == 1) "~ ." else paste0("~ .^", order)
   X        <- model.matrix(as.formula(form_str), data = cells_resp)
   X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]
   X_target <- model.matrix(as.formula(form_str), data = cells_target)
   X_target_noInt <- X_target[, colnames(X_target) != "(Intercept)", drop = FALSE]
   if (use_ridge) {
-    cv_fit <- cv.glmnet(X_noInt, y_vec, alpha = 0)
-    fitted <- as.numeric(predict(cv_fit, newx = X_noInt, s = "lambda.min"))
-    resids <- y_vec - fitted
-    target_pred <- as.numeric(predict(cv_fit, newx = X_target_noInt, s = "lambda.min"))
-    target_mean <- sum(target_pred * target_counts) / sum(target_counts)
+    cf_out      <- crossfit_ridge(X_noInt, y_vec, X_target_noInt, nfolds = nfolds)
+    resids      <- y_vec - cf_out$pred
+    target_mean <- sum(cf_out$target_pred * target_counts) / sum(target_counts)
   } else {
     coefs         <- lm.fit(X, y_vec)$coefficients
     keep          <- !is.na(coefs)
@@ -515,23 +506,66 @@ greg_estimate_ <- function(y_vec, w_vec, cells_resp, cells_target,
   w_sum  <- sum(w_vec)
   mu_hat <- target_mean + sum(w_vec * resids) / w_sum
   se     <- sqrt(sum(w_vec ^ 2 * resids ^ 2)) / w_sum
-  data.frame(estimate = mu_hat, se = se, lambda = lambda_val,
-             method = "greg")
+  data.frame(estimate = mu_hat, se = se, method = "greg")
 }
 
 
 
 
-#' Estimate outcome model with 3-fold cross-fitting using xgboost
+#' Estimate outcome model with cross-fitting using ridge regression
 #'
-#' Splits the respondent data into 3 folds. For each fold, fits an xgboost
-#' model on the remaining two folds and predicts on (a) the held-out fold and
-#' (b) all target-population cells. The target-population predictions are
-#' averaged across the 3 models.
+#' Splits the respondent data into \code{nfolds} folds. For each fold, fits a
+#' ridge regression model (via \code{cv.glmnet} with \code{alpha = 0}) on the
+#' remaining folds and predicts on (a) the held-out fold and (b) all
+#' target-population cells. The target-population predictions are averaged
+#' across the \code{nfolds} models.
 #'
 #' @param X Numeric matrix of respondent covariates (no intercept)
 #' @param y Numeric vector of observed outcomes (length = nrow(X))
 #' @param target_X Numeric matrix of target-population covariates (no intercept)
+#' @param nfolds Integer. Number of cross-fitting folds (default: 3)
+#' @param ... Additional arguments forwarded to \code{glmnet::cv.glmnet()}
+#'
+#' @return A named list with:
+#'   \describe{
+#'     \item{pred}{Numeric vector of cross-fitted predictions for respondents}
+#'     \item{target_pred}{Numeric vector of averaged predictions for target cells}
+#'   }
+#'
+#' @keywords internal
+crossfit_ridge <- function(X, y, target_X, nfolds = 3, ...) {
+
+  n <- nrow(X)
+  folds <- split(sample(n), cut(1:n, nfolds))
+
+  pred <- numeric(n)
+  target_pred <- matrix(0, nrow = nrow(target_X), ncol = length(folds))
+  k <- 1
+  for (fold in folds) {
+    tr_idx <- setdiff(1:n, fold)
+    cv_fit <- cv.glmnet(X[tr_idx, , drop = FALSE], y[tr_idx], alpha = 0, ...)
+    pred[fold] <- as.numeric(predict(cv_fit, newx = X[fold, , drop = FALSE],
+                                     s = "lambda.min"))
+    target_pred[, k] <- as.numeric(predict(cv_fit, newx = target_X,
+                                           s = "lambda.min"))
+    k <- k + 1
+  }
+  return(list(pred = pred, target_pred = rowMeans(target_pred)))
+}
+
+
+
+#' Estimate outcome model with cross-fitting using xgboost
+#'
+#' Splits the respondent data into \code{nfolds} folds. For each fold, fits an
+#' xgboost model on the remaining folds and predicts on (a) the held-out fold
+#' and (b) all target-population cells. The target-population predictions are
+#' averaged across the \code{nfolds} models.
+#'
+#' @param X Numeric matrix of respondent covariates (no intercept)
+#' @param y Numeric vector of observed outcomes (length = nrow(X))
+#' @param target_X Numeric matrix of target-population covariates (no intercept)
+#' @param nfolds Integer. Number of cross-fitting folds (default: 3)
 #' @param nrounds Number of boosting rounds for xgboost (default: 1000)
 #' @param verbose Verbosity level passed to xgboost (default: 0, silent)
 #' @param early_stopping_rounds Number of consecutive non-improving rounds
@@ -545,12 +579,11 @@ greg_estimate_ <- function(y_vec, w_vec, cells_resp, cells_target,
 #'   }
 #'
 #' @keywords internal
-crossfit_xgboost <- function(X, y, target_X, nrounds = 1000, verbose = 0,
-                             early_stopping_rounds = 20, ...) {
+crossfit_xgboost <- function(X, y, target_X, nfolds = 3, nrounds = 1000,
+                             verbose = 0, early_stopping_rounds = 20, ...) {
 
   n <- nrow(X)
-  # split into 3 folds
-  folds <- split(sample(n), cut(1:n, 3))
+  folds <- split(sample(n), cut(1:n, nfolds))
 
   pred <- numeric(n)
   target_pred <- matrix(0, nrow = nrow(target_X), ncol = length(folds))
@@ -573,7 +606,7 @@ crossfit_xgboost <- function(X, y, target_X, nrounds = 1000, verbose = 0,
 
 #' Internal double regression and post-stratification (DRP) estimator
 #'
-#' Uses 3-fold cross-fitted xgboost predictions as the outcome model. The
+#' Uses cross-fitted xgboost predictions as the outcome model. The
 #' point estimate is the target-population mean of the cross-fitted predictions
 #' plus the calibration-weighted mean of residuals (same GREG-style formula as
 #' \code{\link{greg_estimate_}}). The SE uses a sandwich estimator based on
@@ -585,22 +618,21 @@ crossfit_xgboost <- function(X, y, target_X, nrounds = 1000, verbose = 0,
 #' @param cells_resp Data frame of covariate columns for respondents only
 #' @param cells_target Data frame of covariate columns for target population only
 #' @param target_counts Vector of target counts for each cell in \code{cells_target}
-#' @param lambda_val Scalar lambda value used (for labelling output)
+#' @param nfolds Integer. Number of cross-fitting folds (default: 3)
 #' @param ... Additional arguments to pass to xgboost
 #'
-#' @return A one-row data frame with columns estimate, se, lambda, method
+#' @return A one-row data frame with columns estimate, se, method
 #' @keywords internal
 drp_estimate_ <- function(y_vec, w_vec, cells_resp, cells_target,
-                          target_counts, lambda_val, ...) {
+                          target_counts, nfolds = 3, ...) {
   X        <- model.matrix(~ . - 1, data = cells_resp)
   X_target <- model.matrix(~ . - 1, data = cells_target)
 
-  xboost_out <- crossfit_xgboost(X, y_vec, X_target, ...)
+  xboost_out <- crossfit_xgboost(X, y_vec, X_target, nfolds = nfolds, ...)
   target_mean <- sum(xboost_out$target_pred * target_counts) / sum(target_counts)
   resids <- y_vec - xboost_out$pred
   w_sum  <- sum(w_vec)
   mu_hat <- target_mean + sum(w_vec * resids) / w_sum
   se     <- sqrt(sum(w_vec ^ 2 * resids ^ 2)) / w_sum
-  data.frame(estimate = mu_hat, se = se, lambda = lambda_val,
-             method = "drp")
+  data.frame(estimate = mu_hat, se = se, method = "drp")
 }

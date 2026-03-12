@@ -10,7 +10,7 @@ drp_estimate_(
   cells_resp,
   cells_target,
   target_counts,
-  lambda_val,
+  nfolds = 3,
   ...
 )
 }
@@ -25,15 +25,15 @@ drp_estimate_(
 
 \item{target_counts}{Vector of target counts for each cell in \code{cells_target}}
 
-\item{lambda_val}{Scalar lambda value used (for labelling output)}
+\item{nfolds}{Integer. Number of cross-fitting folds (default: 3)}
 
 \item{...}{Additional arguments to pass to xgboost}
 }
 \value{
-A one-row data frame with columns estimate, se, lambda, method
+A one-row data frame with columns estimate, se, method
 }
 \description{
-Uses 3-fold cross-fitted xgboost predictions as the outcome model. The
+Uses cross-fitted xgboost predictions as the outcome model. The
 point estimate is the target-population mean of the cross-fitted predictions
 plus the calibration-weighted mean of residuals (same GREG-style formula as
 \code{\link{greg_estimate_}}). The SE uses a sandwich estimator based on
