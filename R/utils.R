@@ -285,7 +285,7 @@ estimate <- function(object, ...) UseMethod("estimate")
 #'       are used in the sandwich SE formula.}
 #'     \item{\code{"hajek"}}{Plain calibration-weighted mean (Horvitz-Thompson
 #'       style) with Taylor linearization SE.}
-#'     \item{\code{"greg"}}{GREG (generalised regression) estimator with
+#'     \item{\code{"greg"}}{GREG (generalized regression) estimator with
 #'       cross-fitted ridge regression. The point estimate is the weighted mean
 #'       of ridge-predicted values in the target population plus the
 #'       calibration-weighted mean of residuals. The interaction order matches
@@ -300,6 +300,18 @@ estimate <- function(object, ...) UseMethod("estimate")
 #'   selection with this threshold (overrides \code{lambda_idx}).
 #' @param nfolds Integer. Number of cross-fitting folds used when
 #'   \code{method = "greg"} or \code{method = "drp"}. Default \code{3}.
+#' @param subset Optional vector for restricting estimation to a subset of
+#'   respondents. Can be:
+#'   \itemize{
+#'     \item \code{NULL} (default) --- all respondents are used.
+#'     \item A \strong{logical} vector of length \code{object$n_respondents}.
+#'       \code{TRUE} retains the corresponding respondent.
+#'     \item An \strong{integer} index vector. Each element is a 1-based
+#'       position of a respondent to retain.
+#'   }
+#'   Any respondent whose outcome \code{y} is \code{NA} and who would otherwise
+#'   be retained by \code{subset} is automatically excluded, and a warning is
+#'   issued stating how many observations were dropped.
 #' @param ... Additional arguments to pass to xgboost when \code{method = "drp"}. Ignored for other methods.
 #'
 #' @return A data frame with columns:
@@ -318,18 +330,51 @@ estimate <- function(object, ...) UseMethod("estimate")
 #' @export
 estimate.multical <- function(object, y, data = NULL, method = "linearized",
                               lambda_idx = NULL, balance_threshold = NULL,
-                              nfolds = 3, ...) {
+                              nfolds = 3, subset = NULL, ...) {
   y_quo <- enquo(y)
   y_vec <- eval_tidy(y_quo, data = data)
 
-  # coerce character to factor; then fan out over levels
+  # coerce character to factor
   if (is.character(y_vec)) y_vec <- factor(y_vec)
-  if (is.factor(y_vec)) {
-    if (length(y_vec) != object$n_respondents) {
-      stop("`y` must have one value per respondent (",
-           object$n_respondents, " expected, ",
-           length(y_vec), " supplied).")
+
+  # single length check (applies before both factor and numeric paths)
+  if (length(y_vec) != object$n_respondents) {
+    stop("`y` must have one value per respondent (",
+         object$n_respondents, " expected, ",
+         length(y_vec), " supplied).")
+  }
+
+  # --- build keep mask from subset ---
+  n_resp <- object$n_respondents
+  if (is.null(subset)) {
+    keep <- rep(TRUE, n_resp)
+  } else if (is.logical(subset)) {
+    if (length(subset) != n_resp) {
+      stop("`subset` must have length equal to the number of respondents (",
+           n_resp, " expected, ", length(subset), " supplied).")
     }
+    keep <- subset
+  } else if (is.numeric(subset) || is.integer(subset)) {
+    idx <- as.integer(subset)
+    if (any(idx < 1L | idx > n_resp)) {
+      stop("`subset` contains out-of-range indices (must be between 1 and ",
+           n_resp, ").")
+    }
+    keep <- seq_len(n_resp) %in% idx
+  } else {
+    stop("`subset` must be NULL, a logical vector, or an integer index vector.")
+  }
+
+  # --- NA detection: warn once (before factor loop), extend keep ---
+  na_in_keep <- is.na(y_vec) & keep
+  if (any(na_in_keep)) {
+    n_na <- sum(na_in_keep)
+    warning(n_na, " observation(s) with missing outcome (NA) excluded from estimation.")
+    keep[na_in_keep] <- FALSE
+  }
+
+  # fan out over factor levels, passing the already-finalized keep mask
+  if (is.factor(y_vec)) {
     lvls <- levels(y_vec)
     results <- lapply(lvls, function(lvl) {
       y_bin <- as.numeric(y_vec == lvl)
@@ -337,21 +382,20 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
                                  method = method,
                                  lambda_idx = lambda_idx,
                                  balance_threshold = balance_threshold,
-                                 nfolds = nfolds, ...)
+                                 nfolds = nfolds,
+                                 subset = keep, ...)
       cbind(level = lvl, out, stringsAsFactors = FALSE)
     })
     return(do.call(rbind, results))
   }
 
   if (!is.numeric(y_vec)) stop("`y` must evaluate to a numeric, factor, or character vector.")
-  if (length(y_vec) != object$n_respondents) {
-    stop("`y` must have one value per respondent (",
-         object$n_respondents, " expected, ",
-         length(y_vec), " supplied).")
-  }
 
-  w_vec     <- weights(object, lambda_idx = lambda_idx,
-                       balance_threshold = balance_threshold)
+  # apply subset mask to outcome and weights
+  y_vec <- y_vec[keep]
+  w_vec <- weights(object, lambda_idx = lambda_idx,
+                   balance_threshold = balance_threshold)[keep]
+
   lam_idx   <- if (!is.null(balance_threshold)) {
     select_default_lambda(object$weights, object$cells, object$lambda,
                           object$order, balance_threshold)
@@ -368,14 +412,14 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
     cov_cols   <- setdiff(colnames(object$cells),
                           c("sample_count", "target_count", "base_weight"))
     cells_resp <- object$cells[object$cells$sample_count != 0, cov_cols,
-                               drop = FALSE]
+                               drop = FALSE][keep, , drop = FALSE]
     out <- linearized_estimate_(y_vec, w_vec, cells_resp, order = 1,
                                 use_ridge = FALSE)
   } else if (method == "greg") {
     cov_cols   <- setdiff(colnames(object$cells),
                           c("sample_count", "target_count", "base_weight"))
     cells_resp <- object$cells[object$cells$sample_count != 0, cov_cols,
-                               drop = FALSE]
+                               drop = FALSE][keep, , drop = FALSE]
     cells_target <- object$cells[object$cells$target_count != 0, cov_cols,
                                drop = FALSE]
     target_counts <- object$cells$target_count[object$cells$target_count != 0]
@@ -385,7 +429,7 @@ estimate.multical <- function(object, y, data = NULL, method = "linearized",
     cov_cols   <- setdiff(colnames(object$cells),
                           c("sample_count", "target_count", "base_weight"))
     cells_resp <- object$cells[object$cells$sample_count != 0, cov_cols,
-                               drop = FALSE]
+                               drop = FALSE][keep, , drop = FALSE]
     cells_target <- object$cells[object$cells$target_count != 0, cov_cols,
                                  drop = FALSE]
     target_counts <- object$cells$target_count[object$cells$target_count != 0]

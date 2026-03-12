@@ -15,6 +15,7 @@ estimate(object, ...)
   lambda_idx = NULL,
   balance_threshold = NULL,
   nfolds = 3,
+  subset = NULL,
   ...
 )
 }
@@ -62,6 +63,19 @@ selection with this threshold (overrides \code{lambda_idx}).}
 
 \item{nfolds}{Integer. Number of cross-fitting folds used when
 \code{method = "greg"} or \code{method = "drp"}. Default \code{3}.}
+
+\item{subset}{Optional vector for restricting estimation to a subset of
+respondents. Can be:
+\itemize{
+\item \code{NULL} (default) --- all respondents are used.
+\item A \strong{logical} vector of length \code{object$n_respondents}.
+\code{TRUE} retains the corresponding respondent.
+\item An \strong{integer} index vector. Each element is a 1-based
+position of a respondent to retain.
+}
+Any respondent whose outcome \code{y} is \code{NA} and who would otherwise
+be retained by \code{subset} is automatically excluded, and a warning is
+issued stating how many observations were dropped.}
 }
 \value{
 A data frame with columns:

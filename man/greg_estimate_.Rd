@@ -2,7 +2,7 @@
 % Please edit documentation in R/utils.R
 \name{greg_estimate_}
 \alias{greg_estimate_}
-\title{Internal GREG (generalised regression) estimator}
+\title{Internal GREG (generalized regression) estimator}
 \usage{
 greg_estimate_(
   y_vec,
