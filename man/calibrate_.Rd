@@ -16,6 +16,7 @@ calibrate_(
   lowlim = 0,
   uplim = Inf,
   base_weights = NULL,
+  scale_by_order = TRUE,
   verbose = FALSE,
   ...
 )
@@ -50,7 +51,15 @@ regularization penalty becomes
 \eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
 \eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.}
 
-\item{verbose}{Boolean. Show optimization information, default False}
+\item{scale_by_order}{Logical. If \code{TRUE} (default), each column of the
+interaction design matrix is scaled by \eqn{1/\sqrt{n_K}}, where
+\eqn{n_K} is the total number of design-matrix columns corresponding to
+order-\eqn{K} interactions. This makes the objective equivalent to summing
+over orders and then averaging across moment conditions within each order,
+rather than summing all moment conditions equally. Set to \code{FALSE} to
+remove scaling}
+
+\item{verbose}{Boolean. Show optimization information, default FALSE}
 
 \item{...}{Additional parameters for osqp}
 }

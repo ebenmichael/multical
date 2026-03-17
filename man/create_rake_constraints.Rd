@@ -27,7 +27,7 @@ create_rake_constraints(
 
 \item{uplim}{Upper bound on weights, default Inf}
 
-\item{verbose}{Boolean. Show optimization information, default False}
+\item{verbose}{Boolean. Show optimization information, default FALSE}
 }
 \description{
 Create underlying constraints for optimization problem

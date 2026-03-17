@@ -10,6 +10,7 @@ new_multical(
   cells,
   formula,
   order,
+  scale_by_order = TRUE,
   balance_threshold = 0.95
 )
 }
@@ -26,6 +27,11 @@ followed by one row per pop-only cell.}
 \item{formula}{The formula passed to \code{\link{multical}}.}
 
 \item{order}{Integer. Resolved order of interactions used in the calibration.}
+
+\item{scale_by_order}{Logical. Whether the interaction design matrix was
+scaled by \eqn{1/\sqrt{n_K}} within each order. Must match the value used
+during optimization so that balance is measured on the same scale.
+Default \code{TRUE}.}
 
 \item{balance_threshold}{Numeric in (0, 1). Fraction of the total possible
 balance gain required to qualify a lambda for selection. Default 0.95.}

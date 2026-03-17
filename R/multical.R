@@ -57,7 +57,14 @@ NULL
 #' regularization penalty becomes
 #' \eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
 #' \eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.
-#' @param verbose Boolean. Show optimization information, default False
+#' @param scale_by_order Logical. If \code{TRUE} (default), each column of the
+#'   interaction design matrix is scaled by \eqn{1/\sqrt{n_K}}, where
+#'   \eqn{n_K} is the total number of design-matrix columns corresponding to
+#'   order-\eqn{K} interactions. This makes the objective equivalent to summing
+#'   over orders and then averaging across moment conditions within each order,
+#'   rather than summing all moment conditions equally. Set to \code{FALSE} to
+#'   remove scaling
+#' @param verbose Boolean. Show optimization information, default FALSE
 #' @param ... Additional parameters for osqp
 #' 
 #' @return A \code{multical} object with the following fields:
@@ -84,6 +91,7 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
                       base_weights = NULL,
+                      scale_by_order = TRUE,
                       verbose = FALSE, ...) {
 
   # ungroup both inputs if grouped
@@ -135,7 +143,7 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
                         units$target_count,
                         order, lambda, lambda_max, n_lambda, lambda_min_ratio,
                         lowlim, uplim,
-                        bw_vec_full, verbose, ...)
+                        bw_vec_full, scale_by_order, verbose, ...)
 
   # extract the weights matrix (respondents only, rows in sample_data order)
   weights_matrix <- as.matrix(weights)
@@ -146,7 +154,7 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
   # compute correct marginal targets.
   cells <- units %>% select(-".row_id")
 
-  new_multical(weights_matrix, lam_vec, cells, formula, order)
+  new_multical(weights_matrix, lam_vec, cells, formula, order, scale_by_order)
 }
 
 
@@ -160,15 +168,20 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
 #'   followed by one row per pop-only cell.
 #' @param formula The formula passed to \code{\link{multical}}.
 #' @param order Integer. Resolved order of interactions used in the calibration.
+#' @param scale_by_order Logical. Whether the interaction design matrix was
+#'   scaled by \eqn{1/\sqrt{n_K}} within each order. Must match the value used
+#'   during optimization so that balance is measured on the same scale.
+#'   Default \code{TRUE}.
 #' @param balance_threshold Numeric in (0, 1). Fraction of the total possible
 #'   balance gain required to qualify a lambda for selection. Default 0.95.
 #'
 #' @keywords internal
 new_multical <- function(weights_matrix, lambda, cells, formula, order,
+                         scale_by_order = TRUE,
                          balance_threshold = 0.95) {
   n_respondents <- sum(cells$sample_count != 0)
   default_lambda_idx <- select_default_lambda(
-    weights_matrix, cells, lambda, order, balance_threshold
+    weights_matrix, cells, lambda, order, balance_threshold, scale_by_order
   )
   structure(
     list(
@@ -177,6 +190,7 @@ new_multical <- function(weights_matrix, lambda, cells, formula, order,
       cells              = cells,
       formula            = formula,
       order              = order,
+      scale_by_order     = scale_by_order,
       n_respondents      = n_respondents,
       default_lambda_idx = default_lambda_idx,
       balance_threshold  = balance_threshold
@@ -292,6 +306,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf, base_weights = NULL,
+                      scale_by_order = TRUE,
                       verbose = FALSE,
                       ...) {
 
@@ -307,6 +322,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   if(verbose) message("Creating design matrix")
   # get design matrix for the number of interactions
   D <- create_design_matrix(cells, order)
+  if(scale_by_order) D <- scale_design_matrix(D)
 
   # create constraints for raking
   constraints <- create_rake_constraints(cells, D, sample_counts,
@@ -423,6 +439,29 @@ create_design_matrix <- function(cells, order) {
   form <- as.formula(paste("~ . ^ ", order, " - . + 0"))
 
   D <- Matrix::sparse.model.matrix(form, data = cells)
+  return(D)
+}
+
+
+#' Scale design matrix columns inversely by the number of columns at each interaction order
+#'
+#' For each column \eqn{j} of \code{D} whose interaction order is \eqn{K}
+#' (determined by counting \code{:} in the column name), the column is
+#' multiplied by \eqn{1 / \sqrt{n_K}}, where \eqn{n_K} is the total number of
+#' columns of order \eqn{K}. This makes the objective equivalent to summing
+#' over orders and averaging moment conditions within each order.
+#'
+#' @param D Sparse design matrix from \code{\link{create_design_matrix}}
+#' @return A sparse matrix of the same dimensions as \code{D}, with columns
+#'   scaled as described.
+#'
+#' @keywords internal
+scale_design_matrix <- function(D) {
+  if(ncol(D) == 0 || is.null(colnames(D))) return(D)
+  # interaction order = number of ':' in column name (e.g. "A:B" -> order 2)
+  col_orders <- nchar(colnames(D)) - nchar(gsub(":", "", colnames(D), fixed = TRUE))
+  n_k <- tabulate(col_orders + 1L)[col_orders + 1L]
+  D <- D %*% Matrix::Diagonal(x = 1 / sqrt(n_k))
   return(D)
 }
 

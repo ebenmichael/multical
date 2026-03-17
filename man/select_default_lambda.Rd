@@ -9,7 +9,8 @@ select_default_lambda(
   cells,
   lambda,
   order,
-  balance_threshold = 0.95
+  balance_threshold = 0.95,
+  scale_by_order = TRUE
 )
 }
 \arguments{

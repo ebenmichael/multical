@@ -38,7 +38,9 @@ get_balance.multical <- function(x, order, ...) {
 
   D <- Matrix::sparse.model.matrix(~ . - 1, unit_covs)
   if (order > 1) {
-    D <- cbind(D, create_design_matrix(unit_covs, order))
+    D_int <- create_design_matrix(unit_covs, order)
+    if (isTRUE(x$scale_by_order)) D_int <- scale_design_matrix(D_int)
+    D <- cbind(D, D_int)
   }
 
   n_units <- nrow(x$cells)
@@ -114,7 +116,8 @@ get_balance_v_sample_size.multical <- function(x, order, ...) {
 #' @return Integer index into \code{lambda}
 #' @keywords internal
 select_default_lambda <- function(weights_matrix, cells, lambda, order,
-                                  balance_threshold = 0.95) {
+                                  balance_threshold = 0.95,
+                                  scale_by_order = TRUE) {
   # with a single lambda there is nothing to select
   if (length(lambda) == 1L) return(1L)
 
@@ -124,7 +127,9 @@ select_default_lambda <- function(weights_matrix, cells, lambda, order,
 
   D <- Matrix::sparse.model.matrix(~ . - 1, unit_covs)
   if (order > 1) {
-    D <- cbind(D, create_design_matrix(unit_covs, order))
+    D_int <- create_design_matrix(unit_covs, order)
+    if (scale_by_order) D_int <- scale_design_matrix(D_int)
+    D <- cbind(D, D_int)
   }
 
   target_pop <- sum(cells$target_count)
