@@ -57,6 +57,10 @@ NULL
 #' regularization penalty becomes
 #' \eqn{\lambda \sum_i s_i (w_i - b_i)^2 / 2} instead of
 #' \eqn{\lambda \sum_i s_i w_i^2 / 2}. Defaults to 1 for all respondents.
+#' @param exact_order Integer. Order of interactions to calibrate exactly
+#'   (i.e. constrain the weighted sample to match the target). Default 1
+#'   (first-order margins only). Setting to 2 also exactly matches all
+#'   two-way interaction margins, etc. Must be between 1 and \code{order}.
 #' @param scale_by_order Logical. If \code{TRUE} (default), each column of the
 #'   interaction design matrix is scaled by \eqn{1/\sqrt{n_K}}, where
 #'   \eqn{n_K} is the total number of design-matrix columns corresponding to
@@ -77,6 +81,7 @@ NULL
 #'     includes pop-only rows (\code{sample_count = 0})
 #'   \item \code{formula}: the formula passed to \code{multical}
 #'   \item \code{order}: resolved order of interactions used
+#'   \item \code{exact_order}: order of interactions constrained exactly
 #'   \item \code{n_respondents}: number of respondents
 #'   \item \code{default_lambda_idx}: index of the auto-selected best lambda
 #'   \item \code{balance_threshold}: threshold used for lambda selection
@@ -86,7 +91,7 @@ NULL
 #'
 #' @export
 multical <- function(formula, sample_data, pop_data, target_count = NULL,
-                      order = NULL, lambda = NULL,
+                      order = NULL, exact_order = 1, lambda = NULL,
                       lambda_max = NULL, n_lambda = 20,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf,
@@ -141,7 +146,8 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
                                              "base_weight", ".row_id")),
                         units$sample_count,
                         units$target_count,
-                        order, lambda, lambda_max, n_lambda, lambda_min_ratio,
+                        order, exact_order, lambda, lambda_max, n_lambda,
+                        lambda_min_ratio,
                         lowlim, uplim,
                         bw_vec_full, scale_by_order, verbose, ...)
 
@@ -154,7 +160,8 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
   # compute correct marginal targets.
   cells <- units %>% select(-".row_id")
 
-  new_multical(weights_matrix, lam_vec, cells, formula, order, scale_by_order)
+  new_multical(weights_matrix, lam_vec, cells, formula, order, exact_order,
+               scale_by_order)
 }
 
 
@@ -168,6 +175,8 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
 #'   followed by one row per pop-only cell.
 #' @param formula The formula passed to \code{\link{multical}}.
 #' @param order Integer. Resolved order of interactions used in the calibration.
+#' @param exact_order Integer. Order of interactions constrained exactly in the
+#'   optimization. Default 1.
 #' @param scale_by_order Logical. Whether the interaction design matrix was
 #'   scaled by \eqn{1/\sqrt{n_K}} within each order. Must match the value used
 #'   during optimization so that balance is measured on the same scale.
@@ -177,6 +186,7 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
 #'
 #' @keywords internal
 new_multical <- function(weights_matrix, lambda, cells, formula, order,
+                         exact_order = 1,
                          scale_by_order = TRUE,
                          balance_threshold = 0.95) {
   n_respondents <- sum(cells$sample_count != 0)
@@ -190,6 +200,7 @@ new_multical <- function(weights_matrix, lambda, cells, formula, order,
       cells              = cells,
       formula            = formula,
       order              = order,
+      exact_order        = exact_order,
       scale_by_order     = scale_by_order,
       n_respondents      = n_respondents,
       default_lambda_idx = default_lambda_idx,
@@ -303,6 +314,7 @@ create_units_sep <- function(formula, sample_data, pop_data, target_count) {
 #'
 #' @keywords internal
 calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
+                      exact_order = 1,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
                       lambda_min_ratio = 1e-5,
                       lowlim = 0, uplim = Inf, base_weights = NULL,
@@ -327,7 +339,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   # create constraints for raking
   constraints <- create_rake_constraints(cells, D, sample_counts,
                                          target_counts, lowlim, uplim,
-                                         verbose)
+                                         exact_order, verbose)
 
 
   # P matrix and q vector
@@ -475,7 +487,7 @@ scale_design_matrix <- function(D) {
 #'
 #' @keywords internal
 create_rake_constraints <- function(cells, D, sample_counts, target_counts,
-                                    lowlim, uplim, verbose) {
+                                    lowlim, uplim, exact_order = 1, verbose) {
 
   if(verbose) message("Creating constraint matrix")
 
@@ -499,7 +511,12 @@ create_rake_constraints <- function(cells, D, sample_counts, target_counts,
 
   # marginal constraints
   if(verbose) message("\tx Exact marginal balance constraints")
-  design_mat <- Matrix::sparse.model.matrix(~ . - 1, cells)
+  if (exact_order == 1) {
+    exact_form <- formula(~ . - 1)
+  } else {
+    exact_form <- as.formula(paste("~ . ^", exact_order, "- 1"))
+  }
+  design_mat <- Matrix::sparse.model.matrix(exact_form, cells)
 
   A_marg <- Matrix::t(design_mat[sample_counts != 0, , drop = F] *
                       sample_counts_nempty) / sum(sample_counts)

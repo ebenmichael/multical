@@ -9,6 +9,7 @@ calibrate_(
   sample_counts,
   target_counts,
   order = NULL,
+  exact_order = 1,
   lambda = 1,
   lambda_max = NULL,
   n_lambda = 100,
@@ -29,6 +30,11 @@ calibrate_(
 \item{target_counts}{Vector of target counts for each cell}
 
 \item{order}{Integer. What order interactions to balance. Default is all orders}
+
+\item{exact_order}{Integer. Order of interactions to calibrate exactly
+(i.e. constrain the weighted sample to match the target). Default 1
+(first-order margins only). Setting to 2 also exactly matches all
+two-way interaction margins, etc. Must be between 1 and \code{order}.}
 
 \item{lambda}{Numeric. Regularization hyperparamter, by default fits weights
 for a range of values}

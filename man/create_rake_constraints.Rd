@@ -11,6 +11,7 @@ create_rake_constraints(
   target_counts,
   lowlim,
   uplim,
+  exact_order = 1,
   verbose
 )
 }
@@ -26,6 +27,11 @@ create_rake_constraints(
 \item{lowlim}{Lower bound on weights, default 0}
 
 \item{uplim}{Upper bound on weights, default Inf}
+
+\item{exact_order}{Integer. Order of interactions to calibrate exactly
+(i.e. constrain the weighted sample to match the target). Default 1
+(first-order margins only). Setting to 2 also exactly matches all
+two-way interaction margins, etc. Must be between 1 and \code{order}.}
 
 \item{verbose}{Boolean. Show optimization information, default FALSE}
 }

@@ -10,6 +10,7 @@ multical(
   pop_data,
   target_count = NULL,
   order = NULL,
+  exact_order = 1,
   lambda = NULL,
   lambda_max = NULL,
   n_lambda = 20,
@@ -38,6 +39,11 @@ the cell level. Cells present in \code{pop_data} but absent from
 count or weight for each row. Defaults to 1 per row (row-count semantics).}
 
 \item{order}{Integer. What order interactions to balance. Default is all orders}
+
+\item{exact_order}{Integer. Order of interactions to calibrate exactly
+(i.e. constrain the weighted sample to match the target). Default 1
+(first-order margins only). Setting to 2 also exactly matches all
+two-way interaction margins, etc. Must be between 1 and \code{order}.}
 
 \item{lambda}{Numeric. Regularization hyperparamter, by default fits weights
 for a range of values}
@@ -83,6 +89,7 @@ calibration weights, column names are lambda values
 includes pop-only rows (\code{sample_count = 0})
 \item \code{formula}: the formula passed to \code{multical}
 \item \code{order}: resolved order of interactions used
+\item \code{exact_order}: order of interactions constrained exactly
 \item \code{n_respondents}: number of respondents
 \item \code{default_lambda_idx}: index of the auto-selected best lambda
 \item \code{balance_threshold}: threshold used for lambda selection

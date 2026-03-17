@@ -10,6 +10,7 @@ new_multical(
   cells,
   formula,
   order,
+  exact_order = 1,
   scale_by_order = TRUE,
   balance_threshold = 0.95
 )
@@ -27,6 +28,9 @@ followed by one row per pop-only cell.}
 \item{formula}{The formula passed to \code{\link{multical}}.}
 
 \item{order}{Integer. Resolved order of interactions used in the calibration.}
+
+\item{exact_order}{Integer. Order of interactions constrained exactly in the
+optimization. Default 1.}
 
 \item{scale_by_order}{Logical. Whether the interaction design matrix was
 scaled by \eqn{1/\sqrt{n_K}} within each order. Must match the value used
