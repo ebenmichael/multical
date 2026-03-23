@@ -93,6 +93,8 @@ includes pop-only rows (\code{sample_count = 0})
 \item \code{n_respondents}: number of respondents
 \item \code{default_lambda_idx}: index of the auto-selected best lambda
 \item \code{balance_threshold}: threshold used for lambda selection
+\item \code{prop_uncovered}: proportion of total target count in cells
+that have positive target counts but no sample observations
 }
 Use \code{\link{weights}} to extract respondent weights at the default
 lambda, and \code{\link{get_balance}} to assess calibration quality.

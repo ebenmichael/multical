@@ -159,6 +159,55 @@ select_default_lambda <- function(weights_matrix, cells, lambda, order,
 }
 
 
+#' Compute the proportion of target population in uncovered interactions
+#'
+#' For each highest-order interaction term (i.e. the columns of the design
+#' matrix at order \code{order}), aggregates \code{target_count} and
+#' \code{sample_count} across all cells that contribute to that term via
+#' \eqn{D_K^\top \mathbf{t}} and \eqn{D_K^\top \mathbf{s}}.  A term is
+#' \emph{uncovered} if its aggregated target count is positive but its
+#' aggregated sample count is zero.  The statistic is the share of the total
+#' (positive) target mass that falls in uncovered terms.
+#'
+#' @param cells Data frame with covariate columns plus \code{sample_count},
+#'   \code{target_count}, and \code{base_weight}, as stored in a
+#'   \code{\link{multical}} object.
+#' @param order Integer.  Order of interactions used in the calibration
+#'   (i.e. \code{x$order} for a \code{multical} object \code{x}).
+#'
+#' @return A scalar in \eqn{[0, 1]}.
+#' @keywords internal
+compute_prop_uncovered <- function(cells, order) {
+  cov_cols <- setdiff(colnames(cells),
+                      c("sample_count", "target_count", "base_weight"))
+  unit_covs <- cells[, cov_cols, drop = FALSE]
+
+  if (order == 1) {
+    # Highest-order terms are the main effects; use full one-hot encoding so
+    # every factor level gets its own column (mirrors get_balance.multical).
+    D_K <- Matrix::sparse.model.matrix(~ . - 1, unit_covs)
+  } else {
+    D_int <- create_design_matrix(unit_covs, order)
+    # Column interaction order = number of ':'  (e.g. "X1a:X2b" -> 1 colon -> order 2)
+    n_colons <- nchar(colnames(D_int)) -
+      nchar(gsub(":", "", colnames(D_int), fixed = TRUE))
+    D_K <- D_int[, n_colons == order - 1L, drop = FALSE]
+  }
+
+  if (ncol(D_K) == 0L) return(0)
+
+  target_by_term <- as.numeric(Matrix::t(D_K) %*% cells$target_count)
+  sample_by_term <- as.numeric(Matrix::t(D_K) %*% cells$sample_count)
+
+  pos_target <- target_by_term > 0
+  if (!any(pos_target)) return(0)
+
+  total_target     <- sum(target_by_term[pos_target])
+  uncovered_target <- sum(target_by_term[pos_target & sample_by_term == 0])
+  uncovered_target / total_target
+}
+
+
 #' Print a multical object
 #'
 #' @param x A \code{multical} object
@@ -170,6 +219,8 @@ print.multical <- function(x, ...) {
   cat("Formula : "); print(x$formula)
   cat("Order   :", x$order, "\n")
   cat("Respondents :", x$n_respondents, "\n")
+  cat(sprintf("Prop. target pop. in uncovered cells: %.1f%%\n",
+              100 * x$prop_uncovered))
   cat("Lambda values:", length(x$lambda), "\n")
   if (length(x$lambda) > 1) {
     cat(sprintf(

@@ -378,6 +378,65 @@ test_that("estimate() errors for non-numeric, non-factor, non-character y", {
 })
 
 
+# ---------------------------------------------------------------------------
+# prop_uncovered diagnostic tests
+# ---------------------------------------------------------------------------
+
+test_that("compute_prop_uncovered returns 0 with order=1 when all levels are covered", {
+  cells <- data.frame(
+    X1           = factor(c("a", "b", "c")),
+    sample_count = c(5L, 10L, 3L),
+    target_count = c(20, 40, 10),
+    base_weight  = rep(NA_real_, 3)
+  )
+  # D_K = one-hot(X1): columns X1a, X1b, X1c, each a single-row indicator
+  # sample_by_term: all > 0 -> no uncovered terms
+  expect_equal(compute_prop_uncovered(cells, order = 1), 0)
+})
+
+test_that("compute_prop_uncovered is correct with order=1 when one level is uncovered", {
+  cells <- data.frame(
+    X1           = factor(c("a", "b", "c")),
+    sample_count = c(0L, 10L, 3L),   # X1=a has no sample observations
+    target_count = c(10, 30, 20),
+    base_weight  = rep(NA_real_, 3)
+  )
+  # D_K columns (one-hot): X1a -> target=10, sample=0 (uncovered)
+  #                         X1b -> target=30, sample=10
+  #                         X1c -> target=20, sample=3
+  # total positive-target = 60; uncovered target = 10
+  expect_equal(compute_prop_uncovered(cells, order = 1), 10 / 60)
+})
+
+test_that("compute_prop_uncovered ignores terms with zero target count", {
+  cells <- data.frame(
+    X1           = factor(c("a", "b", "c")),
+    sample_count = c(0L, 0L, 3L),
+    target_count = c(10, 0, 20),     # X1=b has zero target -> should not count
+    base_weight  = rep(NA_real_, 3)
+  )
+  # D_K: X1a -> target=10, sample=0 (uncovered); X1b -> target=0 (ignored); X1c -> sample=3
+  # total positive-target = 30; uncovered target = 10
+  expect_equal(compute_prop_uncovered(cells, order = 1), 10 / 30)
+})
+
+test_that("prop_uncovered is stored on the multical object", {
+  cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
+                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+  expect_true("prop_uncovered" %in% names(cal))
+  expect_true(is.numeric(cal$prop_uncovered))
+  expect_gte(cal$prop_uncovered, 0)
+  expect_lte(cal$prop_uncovered, 1)
+})
+
+test_that("prop_uncovered is printed in print.multical output", {
+  cal <- multical(~ X1 + X2, sample_ind, pop_ind,
+                  order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
+  output <- capture.output(print(cal))
+  expect_true(any(grepl("uncovered", output, ignore.case = TRUE)))
+})
+
+
 test_that("calibrate_ throws an informative error when the problem is infeasible", {
   # uplim = 1e-6: box constraints are valid (l <= u), but the weights can never
   # sum to the target total, so OSQP reports primal_infeasible at solve time.
