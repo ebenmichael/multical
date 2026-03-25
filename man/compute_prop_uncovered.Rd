@@ -11,19 +11,22 @@ compute_prop_uncovered(cells, order)
 \code{target_count}, and \code{base_weight}, as stored in a
 \code{\link{multical}} object.}
 
-\item{order}{Integer.  Order of interactions used in the calibration
+\item{order}{Integer.  Maximum order of interactions used in the calibration
 (i.e. \code{x$order} for a \code{multical} object \code{x}).}
 }
 \value{
-A scalar in \eqn{[0, 1]}.
+A data frame with columns \code{order} (integer, 1 through
+\code{order}) and \code{prop_uncovered} (numeric in \eqn{[0, 1]}), with
+one row per order.
 }
 \description{
-For each highest-order interaction term (i.e. the columns of the design
-matrix at order \code{order}), aggregates \code{target_count} and
+For each order \code{k} from 1 to \code{order}, considers all order-\code{k}
+interaction terms (i.e. the columns of the design matrix at exactly order
+\code{k}).  For each such term, aggregates \code{target_count} and
 \code{sample_count} across all cells that contribute to that term via
-\eqn{D_K^\top \mathbf{t}} and \eqn{D_K^\top \mathbf{s}}.  A term is
+\eqn{D_k^\top \mathbf{t}} and \eqn{D_k^\top \mathbf{s}}.  A term is
 \emph{uncovered} if its aggregated target count is positive but its
-aggregated sample count is zero.  The statistic is the share of the total
-(positive) target mass that falls in uncovered terms.
+aggregated sample count is zero.  The statistic for each order is the share
+of the total (positive) target mass that falls in uncovered terms.
 }
 \keyword{internal}

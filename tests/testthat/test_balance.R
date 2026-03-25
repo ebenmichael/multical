@@ -391,7 +391,11 @@ test_that("compute_prop_uncovered returns 0 with order=1 when all levels are cov
   )
   # D_K = one-hot(X1): columns X1a, X1b, X1c, each a single-row indicator
   # sample_by_term: all > 0 -> no uncovered terms
-  expect_equal(compute_prop_uncovered(cells, order = 1), 0)
+  result <- compute_prop_uncovered(cells, order = 1)
+  expect_s3_class(result, "data.frame")
+  expect_equal(nrow(result), 1L)
+  expect_named(result, c("order", "prop_uncovered"))
+  expect_equal(result$prop_uncovered[1], 0)
 })
 
 test_that("compute_prop_uncovered is correct with order=1 when one level is uncovered", {
@@ -405,7 +409,11 @@ test_that("compute_prop_uncovered is correct with order=1 when one level is unco
   #                         X1b -> target=30, sample=10
   #                         X1c -> target=20, sample=3
   # total positive-target = 60; uncovered target = 10
-  expect_equal(compute_prop_uncovered(cells, order = 1), 10 / 60)
+  result <- compute_prop_uncovered(cells, order = 1)
+  expect_s3_class(result, "data.frame")
+  expect_equal(nrow(result), 1L)
+  expect_named(result, c("order", "prop_uncovered"))
+  expect_equal(result$prop_uncovered[1], 10 / 60)
 })
 
 test_that("compute_prop_uncovered ignores terms with zero target count", {
@@ -417,16 +425,22 @@ test_that("compute_prop_uncovered ignores terms with zero target count", {
   )
   # D_K: X1a -> target=10, sample=0 (uncovered); X1b -> target=0 (ignored); X1c -> sample=3
   # total positive-target = 30; uncovered target = 10
-  expect_equal(compute_prop_uncovered(cells, order = 1), 10 / 30)
+  result <- compute_prop_uncovered(cells, order = 1)
+  expect_s3_class(result, "data.frame")
+  expect_equal(nrow(result), 1L)
+  expect_named(result, c("order", "prop_uncovered"))
+  expect_equal(result$prop_uncovered[1], 10 / 30)
 })
 
 test_that("prop_uncovered is stored on the multical object", {
   cal <- multical(~ X1 + X2 + X3 + X4, sample_ind, pop_ind,
                   order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
   expect_true("prop_uncovered" %in% names(cal))
-  expect_true(is.numeric(cal$prop_uncovered))
-  expect_gte(cal$prop_uncovered, 0)
-  expect_lte(cal$prop_uncovered, 1)
+  expect_s3_class(cal$prop_uncovered, "data.frame")
+  expect_named(cal$prop_uncovered, c("order", "prop_uncovered"))
+  expect_equal(nrow(cal$prop_uncovered), cal$order)
+  expect_true(all(cal$prop_uncovered$prop_uncovered >= 0))
+  expect_true(all(cal$prop_uncovered$prop_uncovered <= 1))
 })
 
 test_that("prop_uncovered is printed in print.multical output", {
@@ -434,6 +448,31 @@ test_that("prop_uncovered is printed in print.multical output", {
                   order = 1, eps_rel = 1e-10, eps_abs = 1e-10)
   output <- capture.output(print(cal))
   expect_true(any(grepl("uncovered", output, ignore.case = TRUE)))
+  expect_true(any(grepl("Order 1:", output, fixed = TRUE)))
+})
+
+test_that("compute_prop_uncovered returns correct 2-row data frame for order=2", {
+  # Two factor covariates: X1 in {a,b}, X2 in {c,d}; one order-2 cell uncovered
+  cells <- data.frame(
+    X1           = factor(c("a", "a", "b", "b")),
+    X2           = factor(c("c", "d", "c", "d")),
+    sample_count = c(5L, 0L, 3L, 2L),  # (a,d) has no sample -> uncovered at order 2
+    target_count = c(10, 15, 20, 5),
+    base_weight  = rep(NA_real_, 4)
+  )
+  result <- compute_prop_uncovered(cells, order = 2)
+
+  expect_s3_class(result, "data.frame")
+  expect_equal(nrow(result), 2L)
+  expect_named(result, c("order", "prop_uncovered"))
+  expect_equal(result$order, 1:2)
+
+  # Order 1: all main-effect terms covered (X1a: sample=5, X1b: sample=5,
+  #           X2c: sample=8, X2d: sample=2)
+  expect_equal(result$prop_uncovered[1], 0)
+
+  # Order 2: (a,d) has sample=0, target=15; total positive-target=50; uncovered=15
+  expect_equal(result$prop_uncovered[2], 15 / 50)
 })
 
 

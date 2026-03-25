@@ -13,7 +13,7 @@ calibrate_(
   lambda = 1,
   lambda_max = NULL,
   n_lambda = 100,
-  lambda_min_ratio = 1e-05,
+  lambda_min_ratio = 1e-10,
   lowlim = 0,
   uplim = Inf,
   base_weights = NULL,

@@ -14,7 +14,7 @@ multical(
   lambda = NULL,
   lambda_max = NULL,
   n_lambda = 20,
-  lambda_min_ratio = 1e-05,
+  lambda_min_ratio = 1e-10,
   lowlim = 0,
   uplim = Inf,
   base_weights = NULL,
@@ -93,8 +93,11 @@ includes pop-only rows (\code{sample_count = 0})
 \item \code{n_respondents}: number of respondents
 \item \code{default_lambda_idx}: index of the auto-selected best lambda
 \item \code{balance_threshold}: threshold used for lambda selection
-\item \code{prop_uncovered}: proportion of total target count in cells
-that have positive target counts but no sample observations
+\item \code{prop_uncovered}: data frame with columns \code{order} (integer,
+1 through the calibration order) and \code{prop_uncovered} (numeric in
+\eqn{[0, 1]}), giving the proportion of total target count in cells that have
+positive target counts but no sample observations, for each interaction
+order
 }
 Use \code{\link{weights}} to extract respondent weights at the default
 lambda, and \code{\link{get_balance}} to assess calibration quality.

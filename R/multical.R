@@ -85,8 +85,11 @@ NULL
 #'   \item \code{n_respondents}: number of respondents
 #'   \item \code{default_lambda_idx}: index of the auto-selected best lambda
 #'   \item \code{balance_threshold}: threshold used for lambda selection
-#'   \item \code{prop_uncovered}: proportion of total target count in cells
-#'     that have positive target counts but no sample observations
+#'   \item \code{prop_uncovered}: data frame with columns \code{order} (integer,
+#'     1 through the calibration order) and \code{prop_uncovered} (numeric in
+#'     \eqn{[0, 1]}), giving the proportion of total target count in cells that have
+#'     positive target counts but no sample observations, for each interaction
+#'     order
 #' }
 #' Use \code{\link{weights}} to extract respondent weights at the default
 #' lambda, and \code{\link{get_balance}} to assess calibration quality.
@@ -95,7 +98,7 @@ NULL
 multical <- function(formula, sample_data, pop_data, target_count = NULL,
                       order = NULL, exact_order = 1, lambda = NULL,
                       lambda_max = NULL, n_lambda = 20,
-                      lambda_min_ratio = 1e-5,
+                      lambda_min_ratio = 1e-10,
                       lowlim = 0, uplim = Inf,
                       base_weights = NULL,
                       scale_by_order = TRUE,
@@ -123,7 +126,7 @@ multical <- function(formula, sample_data, pop_data, target_count = NULL,
       summarise(total = sum(!!tc_quo), .groups = "drop") %>%
       pull("total")
   }
-  bw_vec <- bw_vec / sum(bw_vec) * total_target
+  # bw_vec <- bw_vec / sum(bw_vec) * total_target
 
   # build unit-level data frame: respondent rows + pop-only rows
   if(verbose) message("Creating table of unit counts")
@@ -319,7 +322,7 @@ create_units_sep <- function(formula, sample_data, pop_data, target_count) {
 calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
                       exact_order = 1,
                       lambda = 1, lambda_max = NULL, n_lambda = 100,
-                      lambda_min_ratio = 1e-5,
+                      lambda_min_ratio = 1e-10,
                       lowlim = 0, uplim = Inf, base_weights = NULL,
                       scale_by_order = TRUE,
                       verbose = FALSE,
@@ -327,7 +330,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
 
   # default base weights to 1 (recovers standard regularization)
   if(is.null(base_weights)) base_weights <- rep(1, length(sample_counts))
-  # rescale target_counts to sum to the sample size
+  # rescale target_counts and base weights to sum to the sample size
   target_counts <- target_counts / sum(target_counts) * sum(sample_counts)
   base_weights <- base_weights / sum(base_weights) * sum(sample_counts)
 
@@ -349,7 +352,7 @@ calibrate_ <- function(cells, sample_counts, target_counts, order = NULL,
   if(verbose) message("Creating quadratic term matrix")
   if(is.null(lambda) & order > 1) {
     if(is.null(lambda_max)) {
-      unif_imbal <- Matrix::t(D) %*% (sample_counts * base_weights - target_counts)
+      unif_imbal <- Matrix::t(D) %*% (base_weights - target_counts)
       lambda_max <- sqrt(sum(unif_imbal ^ 2))
     }
     lam_seq <- lambda_max * 10 ^ seq(0, log10(lambda_min_ratio),

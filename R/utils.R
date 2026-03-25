@@ -161,50 +161,66 @@ select_default_lambda <- function(weights_matrix, cells, lambda, order,
 
 #' Compute the proportion of target population in uncovered interactions
 #'
-#' For each highest-order interaction term (i.e. the columns of the design
-#' matrix at order \code{order}), aggregates \code{target_count} and
+#' For each order \code{k} from 1 to \code{order}, considers all order-\code{k}
+#' interaction terms (i.e. the columns of the design matrix at exactly order
+#' \code{k}).  For each such term, aggregates \code{target_count} and
 #' \code{sample_count} across all cells that contribute to that term via
-#' \eqn{D_K^\top \mathbf{t}} and \eqn{D_K^\top \mathbf{s}}.  A term is
+#' \eqn{D_k^\top \mathbf{t}} and \eqn{D_k^\top \mathbf{s}}.  A term is
 #' \emph{uncovered} if its aggregated target count is positive but its
-#' aggregated sample count is zero.  The statistic is the share of the total
-#' (positive) target mass that falls in uncovered terms.
+#' aggregated sample count is zero.  The statistic for each order is the share
+#' of the total (positive) target mass that falls in uncovered terms.
 #'
 #' @param cells Data frame with covariate columns plus \code{sample_count},
 #'   \code{target_count}, and \code{base_weight}, as stored in a
 #'   \code{\link{multical}} object.
-#' @param order Integer.  Order of interactions used in the calibration
+#' @param order Integer.  Maximum order of interactions used in the calibration
 #'   (i.e. \code{x$order} for a \code{multical} object \code{x}).
 #'
-#' @return A scalar in \eqn{[0, 1]}.
+#' @return A data frame with columns \code{order} (integer, 1 through
+#'   \code{order}) and \code{prop_uncovered} (numeric in \eqn{[0, 1]}), with
+#'   one row per order.
 #' @keywords internal
 compute_prop_uncovered <- function(cells, order) {
   cov_cols <- setdiff(colnames(cells),
                       c("sample_count", "target_count", "base_weight"))
   unit_covs <- cells[, cov_cols, drop = FALSE]
 
-  if (order == 1) {
-    # Highest-order terms are the main effects; use full one-hot encoding so
-    # every factor level gets its own column (mirrors get_balance.multical).
-    D_K <- Matrix::sparse.model.matrix(~ . - 1, unit_covs)
-  } else {
-    D_int <- create_design_matrix(unit_covs, order)
-    # Column interaction order = number of ':'  (e.g. "X1a:X2b" -> 1 colon -> order 2)
-    n_colons <- nchar(colnames(D_int)) -
-      nchar(gsub(":", "", colnames(D_int), fixed = TRUE))
-    D_K <- D_int[, n_colons == order - 1L, drop = FALSE]
+  # Pre-build interaction matrix once for order > 1
+  D_int <- if (order > 1) create_design_matrix(unit_covs, order) else NULL
+
+  prop_vec <- numeric(order)
+  for (k in seq_len(order)) {
+    if (k == 1) {
+      # Main effects: full one-hot encoding so every factor level gets its own
+      # column (mirrors get_balance.multical).
+      D_K <- Matrix::sparse.model.matrix(~ . - 1, unit_covs)
+    } else {
+      # Column interaction order = number of ':' (e.g. "X1a:X2b" -> 1 colon -> order 2)
+      n_colons <- nchar(colnames(D_int)) -
+        nchar(gsub(":", "", colnames(D_int), fixed = TRUE))
+      D_K <- D_int[, n_colons == k - 1L, drop = FALSE]
+    }
+
+    if (ncol(D_K) == 0L) {
+      prop_vec[k] <- 0
+      next
+    }
+
+    target_by_term <- as.numeric(Matrix::t(D_K) %*% cells$target_count)
+    sample_by_term <- as.numeric(Matrix::t(D_K) %*% cells$sample_count)
+
+    pos_target <- target_by_term > 0
+    if (!any(pos_target)) {
+      prop_vec[k] <- 0
+      next
+    }
+
+    total_target     <- sum(target_by_term[pos_target])
+    uncovered_target <- sum(target_by_term[pos_target & sample_by_term == 0])
+    prop_vec[k] <- uncovered_target / total_target
   }
 
-  if (ncol(D_K) == 0L) return(0)
-
-  target_by_term <- as.numeric(Matrix::t(D_K) %*% cells$target_count)
-  sample_by_term <- as.numeric(Matrix::t(D_K) %*% cells$sample_count)
-
-  pos_target <- target_by_term > 0
-  if (!any(pos_target)) return(0)
-
-  total_target     <- sum(target_by_term[pos_target])
-  uncovered_target <- sum(target_by_term[pos_target & sample_by_term == 0])
-  uncovered_target / total_target
+  data.frame(order = seq_len(order), prop_uncovered = prop_vec)
 }
 
 
@@ -219,8 +235,12 @@ print.multical <- function(x, ...) {
   cat("Formula : "); print(x$formula)
   cat("Order   :", x$order, "\n")
   cat("Respondents :", x$n_respondents, "\n")
-  cat(sprintf("Prop. target pop. in uncovered cells: %.1f%%\n",
-              100 * x$prop_uncovered))
+  cat("Prop. target pop. in uncovered cells:\n")
+  for (i in seq_len(nrow(x$prop_uncovered))) {
+    cat(sprintf("  Order %d: %.1f%%\n",
+                x$prop_uncovered$order[i],
+                100 * x$prop_uncovered$prop_uncovered[i]))
+  }
   cat("Lambda values:", length(x$lambda), "\n")
   if (length(x$lambda) > 1) {
     cat(sprintf(
@@ -586,16 +606,16 @@ greg_estimate_ <- function(y_vec, w_vec, cells_resp, cells_target,
                                  target_counts, order,
                                  use_ridge = TRUE, nfolds = 3) {
   form_str <- if (order == 1) "~ ." else paste0("~ .^", order)
-  X        <- model.matrix(as.formula(form_str), data = cells_resp)
+  X        <- Matrix::sparse.model.matrix(as.formula(form_str), data = cells_resp)
   X_noInt  <- X[, colnames(X) != "(Intercept)", drop = FALSE]
-  X_target <- model.matrix(as.formula(form_str), data = cells_target)
+  X_target <- Matrix::sparse.model.matrix(as.formula(form_str), data = cells_target)
   X_target_noInt <- X_target[, colnames(X_target) != "(Intercept)", drop = FALSE]
   if (use_ridge) {
     cf_out      <- crossfit_ridge(X_noInt, y_vec, X_target_noInt, nfolds = nfolds)
     resids      <- y_vec - cf_out$pred
     target_mean <- sum(cf_out$target_pred * target_counts) / sum(target_counts)
   } else {
-    coefs         <- lm.fit(X, y_vec)$coefficients
+    coefs         <- lm.fit(as.matrix(X), y_vec)$coefficients
     keep          <- !is.na(coefs)
     fitted        <- as.numeric(X[, keep, drop = FALSE]        %*% coefs[keep])
     target_pred   <- as.numeric(X_target[, keep, drop = FALSE] %*% coefs[keep])
